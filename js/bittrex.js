@@ -385,6 +385,37 @@ module.exports = class bittrex extends Exchange {
         throw new ExchangeError (this.id + ' fetchTrades() returned undefined response');
     }
     
+    parseMyTrades (trades, market = undefined) {
+        return Object.values (trades).map (trade => this.parseMyTrade (trade, market))
+    }
+
+    parseMyTrade (trade, market = undefined) {
+        let timestamp = this.parse8601 (trade['TimeStamp']);
+        let side = undefined;
+        if (trade['OrderType'] == 'LIMIT_BUY') {
+            side = 'buy';
+        } else if (trade['OrderType'] == 'LIMIT_SELL') {
+            side = 'sell';
+        }
+        let id = undefined;
+        if ('OrderUuid' in trade)
+            id = trade['OrderUuid'].toString ();
+        if ((!market) && ('Exchange' in trade))
+            market = this.markets_by_id[trade['Exchange']];
+        let symbol = (market) ? market['symbol'] : undefined;
+        return {
+            'id': id,
+            'info': trade,
+            'timestamp': timestamp,
+            'datetime': this.iso8601 (timestamp),
+            'symbol': symbol,
+            'type': 'limit',
+            'side': side,
+            'price': trade['Price'],
+            'amount': trade['Quantity'],
+        };
+    }
+    
     async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         let request = {};
@@ -394,7 +425,7 @@ module.exports = class bittrex extends Exchange {
             request['market'] = market['id'];
         }
         let response = await this.accountGetOrderhistory (this.extend (request, params));
-        return this.parseTrades (response['result'], market);
+        return this.parseMyTrades (response['result'], market);
   }
 
     parseOHLCV (ohlcv, market = undefined, timeframe = '1d', since = undefined, limit = undefined) {
