@@ -186,6 +186,17 @@ module.exports = class kraken extends Exchange {
         });
     }
 
+    commonCurrencyCode (currency) {
+        if (!this.substituteCommonCurrencyCodes)
+            return currency;
+        if (currency[0] === 'X') {
+            currency = currency.slice (1);
+        } else if (currency[0] === 'Z') {
+            currency = currency.slice (1);
+        }
+        return currency;
+    }
+
     costToPrecision (symbol, cost) {
         return this.truncate (parseFloat (cost), this.markets[symbol]['precision']['price']);
     }
@@ -248,10 +259,11 @@ module.exports = class kraken extends Exchange {
             let market = markets['result'][id];
             let base = market['base'];
             let quote = market['quote'];
-            if ((base[0] === 'X') || (base[0] === 'Z'))
-                base = base.slice (1);
-            if ((quote[0] === 'X') || (quote[0] === 'Z'))
-                quote = quote.slice (1);
+            // slicing moved to commonCurrencyCode
+            // if ((base[0] === 'X') || (base[0] === 'Z'))
+            //     base = base.slice (1);
+            // if ((quote[0] === 'X') || (quote[0] === 'Z'))
+            //     quote = quote.slice (1);
             base = this.commonCurrencyCode (base);
             quote = this.commonCurrencyCode (quote);
             let darkpool = id.indexOf ('.d') >= 0;
@@ -589,11 +601,12 @@ module.exports = class kraken extends Exchange {
             let currency = currencies[c];
             let code = currency;
             // X-ISO4217-A3 standard currency codes
-            if (code[0] === 'X') {
-                code = code.slice (1);
-            } else if (code[0] === 'Z') {
-                code = code.slice (1);
-            }
+            // slicing moved to commonCurrencyCode
+            // if (code[0] === 'X') {
+            //     code = code.slice (1);
+            // } else if (code[0] === 'Z') {
+            //     code = code.slice (1);
+            // }
             code = this.commonCurrencyCode (code);
             let balance = parseFloat (balances[currency]);
             let account = {
