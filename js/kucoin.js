@@ -107,8 +107,8 @@ module.exports = class kucoin extends Exchange {
             },
             'fees': {
                 'trading': {
-                    'maker': 0.0010,
-                    'taker': 0.0010,
+                    'maker': 0.001,
+                    'taker': 0.001,
                 },
                 'funding': {
                     'tierBased': false,
@@ -164,14 +164,32 @@ module.exports = class kucoin extends Exchange {
                         'DRGN': 1.0,
                         'ACT': 0.1,
                     },
-                    'deposit': 0.00,
+                    'deposit': {},
                 },
+            },
+            // exchange-specific options
+            'options': {
+                'timeDifference': 0, // the difference between system clock and Kucoin clock
+                'adjustForTimeDifference': false, // controls the adjustment logic upon instantiation
             },
         });
     }
 
+    nonce () {
+        return this.milliseconds () - this.options['timeDifference'];
+    }
+
+    async loadTimeDifference () {
+        const response = await this.publicGetOpenTick ();
+        const after = this.milliseconds ();
+        this.options['timeDifference'] = parseInt (after - response['timestamp']);
+        return this.options['timeDifference'];
+    }
+
     async fetchMarkets () {
         let response = await this.publicGetMarketOpenSymbols ();
+        if (this.options['adjustForTimeDifference'])
+            await this.loadTimeDifference ();
         let markets = response['data'];
         let result = [];
         for (let i = 0; i < markets.length; i++) {
@@ -193,6 +211,8 @@ module.exports = class kucoin extends Exchange {
                 'base': base,
                 'quote': quote,
                 'active': active,
+                'taker': this.safeFloat (market, 'feeRate'),
+                'maker': this.safeFloat (market, 'feeRate'),
                 'info': market,
                 'lot': Math.pow (10, -precision['amount']),
                 'precision': precision,
@@ -408,10 +428,10 @@ module.exports = class kucoin extends Exchange {
 
     async fetchOrder (id, symbol = undefined, params = {}) {
         if (typeof symbol === 'undefined')
-            throw new ExchangeError (this.id + ' fetchOrder requires a symbol');
+            throw new ExchangeError (this.id + ' fetchOrder requires a symbol argument');
         let orderType = this.safeValue (params, 'type');
         if (typeof orderType === 'undefined')
-            throw new ExchangeError (this.id + ' fetchOrder requires parameter type=["BUY"|"SELL"]');
+            throw new ExchangeError (this.id + ' fetchOrder requires a type parameter ("BUY" or "SELL")');
         await this.loadMarkets ();
         let market = this.market (symbol);
         let request = {
@@ -734,7 +754,7 @@ module.exports = class kucoin extends Exchange {
         if (api === 'private') {
             this.checkRequiredCredentials ();
             // their nonce is always a calibrated synched milliseconds-timestamp
-            let nonce = this.milliseconds ();
+            let nonce = this.nonce ();
             let queryString = '';
             nonce = nonce.toString ();
             if (Object.keys (query).length) {

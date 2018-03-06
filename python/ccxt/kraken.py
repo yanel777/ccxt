@@ -265,7 +265,7 @@ class kraken (Exchange):
             base = self.common_currency_code(base)
             quote = self.common_currency_code(quote)
             darkpool = id.find('.d') >= 0
-            symbol = market['altname'] if darkpool else(base + '/' + quote)
+            symbol = market['altname'] if darkpool else (base + '/' + quote)
             maker = None
             if 'fees_maker' in market:
                 maker = float(market['fees_maker'][0][1]) / 100
@@ -326,7 +326,7 @@ class kraken (Exchange):
             'limits': limits,
         }
         markets = [
-            {'id': 'XXLMZEUR', 'symbol': 'XLM/EUR', 'base': 'XLM', 'quote': 'EUR', 'altname': 'XLMEUR'},
+            # {'id': 'XXLMZEUR', 'symbol': 'XLM/EUR', 'base': 'XLM', 'quote': 'EUR', 'altname': 'XLMEUR'},
         ]
         for i in range(0, len(markets)):
             result.append(self.extend(defaults, markets[i]))
@@ -603,8 +603,11 @@ class kraken (Exchange):
         if type == 'limit':
             order['price'] = self.price_to_precision(symbol, price)
         response = self.privatePostAddOrder(self.extend(order, params))
-        length = len(response['result']['txid'])
-        id = response['result']['txid'] if (length > 1) else response['result']['txid'][0]
+        id = self.safe_value(response['result'], 'txid')
+        if id is not None:
+            if isinstance(id, list):
+                length = len(id)
+                id = id if (length > 1) else id[0]
         return {
             'info': response,
             'id': id,
@@ -723,7 +726,7 @@ class kraken (Exchange):
             request['start'] = int(since / 1000)
         response = self.privatePostOpenOrders(self.extend(request, params))
         orders = self.parse_orders(response['result']['open'], None, since, limit)
-        return self.filter_orders_by_symbol(orders, symbol)
+        return self.filter_by_symbol(orders, symbol)
 
     def fetch_closed_orders(self, symbol=None, since=None, limit=None, params={}):
         self.load_markets()
@@ -732,7 +735,7 @@ class kraken (Exchange):
             request['start'] = int(since / 1000)
         response = self.privatePostClosedOrders(self.extend(request, params))
         orders = self.parse_orders(response['result']['closed'], None, since, limit)
-        return self.filter_orders_by_symbol(orders, symbol)
+        return self.filter_by_symbol(orders, symbol)
 
     def fetch_deposit_methods(self, code=None, params={}):
         self.load_markets()

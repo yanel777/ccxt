@@ -98,7 +98,11 @@ class binance extends Exchange {
                         'ticker/allBookTickers',
                         'ticker/price',
                         'ticker/bookTicker',
+                        'exchangeInfo',
                     ),
+                    'put' => array ( 'userDataStream' ),
+                    'post' => array ( 'userDataStream' ),
+                    'delete' => array ( 'userDataStream' ),
                 ),
                 'private' => array (
                     'get' => array (
@@ -115,11 +119,6 @@ class binance extends Exchange {
                     'delete' => array (
                         'order',
                     ),
-                ),
-                'v1' => array (
-                    'put' => array ( 'userDataStream' ),
-                    'post' => array ( 'userDataStream' ),
-                    'delete' => array ( 'userDataStream' ),
                 ),
             ),
             'fees' => array (
@@ -301,22 +300,30 @@ class binance extends Exchange {
             ),
             // exchange-specific options
             'options' => array (
+                'warnOnFetchOpenOrdersWithoutSymbol' => true,
                 'recvWindow' => 5 * 1000, // 5 sec, binance default
                 'timeDifference' => 0, // the difference between system clock and Binance clock
                 'adjustForTimeDifference' => false, // controls the adjustment logic upon instantiation
             ),
+            'exceptions' => array (
+                '-1013' => '\\ccxt\\InvalidOrder', // createOrder -> 'invalid quantity'/'invalid price'/MIN_NOTIONAL
+                '-1021' => '\\ccxt\\InvalidNonce', // 'your time is ahead of server'
+                '-1100' => '\\ccxt\\InvalidOrder', // createOrder(symbol, 1, asdf) -> 'Illegal characters found in parameter 'price'
+                '-2010' => '\\ccxt\\InsufficientFunds', // createOrder -> 'Account has insufficient balance for requested action.'
+                '-2011' => '\\ccxt\\OrderNotFound', // cancelOrder(1, 'BTC/USDT') -> 'UNKNOWN_ORDER'
+                '-2015' => '\\ccxt\\AuthenticationError', // "Invalid API-key, IP, or permissions for action."
+            ),
         ));
     }
 
-    public function milliseconds () {
-        return parent::milliseconds () - $this->options['timeDifference'];
+    public function nonce () {
+        return $this->milliseconds () - $this->options['timeDifference'];
     }
 
     public function load_time_difference () {
-        $before = $this->milliseconds ();
         $response = $this->publicGetTime ();
         $after = $this->milliseconds ();
-        $this->options['timeDifference'] = intval (($before . $after) / 2 - $response['serverTime']);
+        $this->options['timeDifference'] = intval ($after - $response['serverTime']);
         return $this->options['timeDifference'];
     }
 
@@ -451,20 +458,13 @@ class binance extends Exchange {
 
     public function parse_ticker ($ticker, $market = null) {
         $timestamp = $this->safe_integer($ticker, 'closeTime');
-        if ($timestamp === null)
-            $timestamp = $this->milliseconds ();
-        $symbol = $ticker['symbol'];
-        if (!$market) {
-            if (is_array ($this->markets_by_id) && array_key_exists ($symbol, $this->markets_by_id)) {
-                $market = $this->markets_by_id[$symbol];
-            }
-        }
-        if ($market)
-            $symbol = $market['symbol'];
+        $iso8601 = ($timestamp === null) ? null : $this->iso8601 ($timestamp);
+        $symbol = $this->find_symbol($this->safe_string($ticker, 'symbol'), $market);
+        $last = $this->safe_float($ticker, 'lastPrice');
         return array (
             'symbol' => $symbol,
             'timestamp' => $timestamp,
-            'datetime' => $this->iso8601 ($timestamp),
+            'datetime' => $iso8601,
             'high' => $this->safe_float($ticker, 'highPrice'),
             'low' => $this->safe_float($ticker, 'lowPrice'),
             'bid' => $this->safe_float($ticker, 'bidPrice'),
@@ -473,9 +473,9 @@ class binance extends Exchange {
             'askVolume' => $this->safe_float($ticker, 'askQty'),
             'vwap' => $this->safe_float($ticker, 'weightedAvgPrice'),
             'open' => $this->safe_float($ticker, 'openPrice'),
-            'close' => $this->safe_float($ticker, 'prevClosePrice'),
-            'first' => null,
-            'last' => $this->safe_float($ticker, 'lastPrice'),
+            'close' => $last,
+            'last' => $last,
+            'previousClose' => $this->safe_float($ticker, 'prevClosePrice'), // previous day close
             'change' => $this->safe_float($ticker, 'priceChange'),
             'percentage' => $this->safe_float($ticker, 'priceChangePercent'),
             'average' => null,
@@ -536,14 +536,14 @@ class binance extends Exchange {
         ];
     }
 
-    public function fetch_ohlcv ($symbol, $timeframe = '1m', $since = null, $limit = null, $params = array ()) {
+    public function fetch_ohlcv ($symbol, $timeframe = '1m', $since = null, $limit = 500, $params = array ()) {
         $this->load_markets();
         $market = $this->market ($symbol);
         $request = array (
             'symbol' => $market['id'],
             'interval' => $this->timeframes[$timeframe],
+            'limit' => $limit, // default == max == 500
         );
-        $request['limit'] = ($limit) ? $limit : 500; // default == max == 500
         if ($since !== null)
             $request['startTime'] = $since;
         $response = $this->publicGetKlines (array_merge ($request, $params));
@@ -612,31 +612,20 @@ class binance extends Exchange {
     }
 
     public function parse_order_status ($status) {
-        if ($status === 'NEW')
-            return 'open';
-        if ($status === 'PARTIALLY_FILLED')
-            return 'open';
-        if ($status === 'FILLED')
-            return 'closed';
-        if ($status === 'CANCELED')
-            return 'canceled';
-        return strtolower ($status);
+        $statuses = array (
+            'NEW' => 'open',
+            'PARTIALLY_FILLED' => 'open',
+            'FILLED' => 'closed',
+            'CANCELED' => 'canceled',
+        );
+        return (is_array ($statuses) && array_key_exists ($status, $statuses)) ? $statuses[$status] : strtolower ($status);
     }
 
     public function parse_order ($order, $market = null) {
         $status = $this->safe_value($order, 'status');
         if ($status !== null)
             $status = $this->parse_order_status($status);
-        $symbol = null;
-        if ($market) {
-            $symbol = $market['symbol'];
-        } else {
-            $id = $order['symbol'];
-            if (is_array ($this->markets_by_id) && array_key_exists ($id, $this->markets_by_id)) {
-                $market = $this->markets_by_id[$id];
-                $symbol = $market['symbol'];
-            }
-        }
+        $symbol = $this->find_symbol($this->safe_string($order, 'symbol'), $market);
         $timestamp = null;
         if (is_array ($order) && array_key_exists ('time', $order))
             $timestamp = $order['time'];
@@ -695,10 +684,15 @@ class binance extends Exchange {
             throw new ExchangeError ($this->id . ' fetchOrder requires a $symbol param');
         $this->load_markets();
         $market = $this->market ($symbol);
-        $response = $this->privateGetOrder (array_merge (array (
+        $origClientOrderId = $this->safe_value($params, 'origClientOrderId');
+        $request = array (
             'symbol' => $market['id'],
-            'orderId' => intval ($id),
-        ), $params));
+        );
+        if ($origClientOrderId !== null)
+            $request['origClientOrderId'] = $origClientOrderId;
+        else
+            $request['orderId'] = intval ($id);
+        $response = $this->privateGetOrder (array_merge ($request, $params));
         return $this->parse_order($response, $market);
     }
 
@@ -717,14 +711,17 @@ class binance extends Exchange {
     }
 
     public function fetch_open_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
-        // if (!$symbol)
-        //     throw new ExchangeError ($this->id . ' fetchOpenOrders requires a $symbol param');
         $this->load_markets();
         $market = null;
         $request = array ();
         if ($symbol !== null) {
             $market = $this->market ($symbol);
             $request['symbol'] = $market['id'];
+        } else if ($this->options['warnOnFetchOpenOrdersWithoutSymbol']) {
+            $symbols = $this->symbols;
+            $numSymbols = is_array ($symbols) ? count ($symbols) : 0;
+            $fetchOpenOrdersRateLimit = intval ($numSymbols / 2);
+            throw new ExchangeError ($this->id . ' fetchOpenOrders WARNING => fetching open orders without specifying a $symbol is rate-limited to one call per ' . (string) $fetchOpenOrdersRateLimit . ' seconds. Do not call this method frequently to avoid ban. Set ' . $this->id . '.options["warnOnFetchOpenOrdersWithoutSymbol"] = false to suppress this warning message.');
         }
         $response = $this->privateGetOpenOrders (array_merge ($request, $params));
         return $this->parse_orders($response, $market, $since, $limit);
@@ -796,6 +793,7 @@ class binance extends Exchange {
     }
 
     public function withdraw ($code, $amount, $address, $tag = null, $params = array ()) {
+        $this->load_markets();
         $currency = $this->currency ($code);
         $name = mb_substr ($address, 0, 20);
         $request = array (
@@ -828,7 +826,7 @@ class binance extends Exchange {
         } else if (($api === 'private') || ($api === 'wapi')) {
             $this->check_required_credentials();
             $query = $this->urlencode (array_merge (array (
-                'timestamp' => $this->milliseconds (),
+                'timestamp' => $this->nonce (),
                 'recvWindow' => $this->options['recvWindow'],
             ), $params));
             $signature = $this->hmac ($this->encode ($query), $this->encode ($this->secret));
@@ -850,32 +848,40 @@ class binance extends Exchange {
     }
 
     public function handle_errors ($code, $reason, $url, $method, $headers, $body) {
-        if ($code >= 400) {
-            if (($code === 418) || ($code === 429))
-                throw new DDoSProtection ($this->id . ' ' . (string) $code . ' ' . $reason . ' ' . $body);
-            if (mb_strpos ($body, 'Price * QTY is zero or less') !== false)
-                throw new InvalidOrder ($this->id . ' order cost = amount * price is zero or less ' . $body);
-            if (mb_strpos ($body, 'MIN_NOTIONAL') !== false)
-                throw new InvalidOrder ($this->id . ' order cost = amount * price is too small ' . $body);
-            if (mb_strpos ($body, 'LOT_SIZE') !== false)
-                throw new InvalidOrder ($this->id . ' order amount should be evenly divisible by lot size, use $this->amount_to_lots(symbol, amount) ' . $body);
-            if (mb_strpos ($body, 'PRICE_FILTER') !== false)
-                throw new InvalidOrder ($this->id . ' order price exceeds allowed price precision or invalid, use $this->price_to_precision(symbol, amount) ' . $body);
-            if (mb_strpos ($body, 'Order does not exist') !== false)
-                throw new OrderNotFound ($this->id . ' ' . $body);
-        }
+        // in case of $error binance sets http status $code >= 400
+        if ($code < 300)
+            // status $code ok, proceed with request
+            return;
+        if ($code < 400)
+            // should not normally happen, reserve for redirects in case
+            // we'll want to scrape some info from web pages
+            return;
+        // $code >= 400
+        if (($code === 418) || ($code === 429))
+            throw new DDoSProtection ($this->id . ' ' . (string) $code . ' ' . $reason . ' ' . $body);
+        // $error $response in a form => array ( "$code" => -1013, "msg" => "Invalid quantity." )
+        // following block cointains legacy checks against message patterns in "msg" property
+        // will switch "$code" checks eventually, when we know all of them
+        if (mb_strpos ($body, 'Price * QTY is zero or less') !== false)
+            throw new InvalidOrder ($this->id . ' order cost = amount * price is zero or less ' . $body);
+        if (mb_strpos ($body, 'LOT_SIZE') !== false)
+            throw new InvalidOrder ($this->id . ' order amount should be evenly divisible by lot size, use $this->amount_to_lots(symbol, amount) ' . $body);
+        if (mb_strpos ($body, 'PRICE_FILTER') !== false)
+            throw new InvalidOrder ($this->id . ' order price exceeds allowed price precision or invalid, use $this->price_to_precision(symbol, amount) ' . $body);
+        if (mb_strpos ($body, 'Order does not exist') !== false)
+            throw new OrderNotFound ($this->id . ' ' . $body);
+        // checks against $error codes
         if (gettype ($body) == 'string') {
             if (strlen ($body) > 0) {
                 if ($body[0] === '{') {
                     $response = json_decode ($body, $as_associative_array = true);
-                    $error = $this->safe_value($response, 'code');
+                    $error = $this->safe_string($response, 'code');
                     if ($error !== null) {
-                        if ($error === -2010) {
-                            throw new InsufficientFunds ($this->id . ' ' . $this->json ($response));
-                        } else if ($error === -2011) {
-                            throw new OrderNotFound ($this->id . ' ' . $this->json ($response));
-                        } else if ($error === -1013) { // Invalid quantity
-                            throw new InvalidOrder ($this->id . ' ' . $this->json ($response));
+                        $exceptions = $this->exceptions;
+                        if (is_array ($exceptions) && array_key_exists ($error, $exceptions)) {
+                            throw new $exceptions[$error] ($this->id . ' ' . $this->json ($response));
+                        } else {
+                            throw new ExchangeError ($this->id . ' => unknown $error $code => ' . $this->json ($response));
                         }
                     }
                 }

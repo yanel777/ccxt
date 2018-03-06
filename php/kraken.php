@@ -318,7 +318,7 @@ class kraken extends Exchange {
             'limits' => $limits,
         );
         $markets = array (
-            array ( 'id' => 'XXLMZEUR', 'symbol' => 'XLM/EUR', 'base' => 'XLM', 'quote' => 'EUR', 'altname' => 'XLMEUR' ),
+            // array ( 'id' => 'XXLMZEUR', 'symbol' => 'XLM/EUR', 'base' => 'XLM', 'quote' => 'EUR', 'altname' => 'XLMEUR' ),
         );
         for ($i = 0; $i < count ($markets); $i++) {
             $result[] = array_merge ($defaults, $markets[$i]);
@@ -617,8 +617,13 @@ class kraken extends Exchange {
         if ($type === 'limit')
             $order['price'] = $this->price_to_precision($symbol, $price);
         $response = $this->privatePostAddOrder (array_merge ($order, $params));
-        $length = is_array ($response['result']['txid']) ? count ($response['result']['txid']) : 0;
-        $id = ($length > 1) ? $response['result']['txid'] : $response['result']['txid'][0];
+        $id = $this->safe_value($response['result'], 'txid');
+        if ($id !== null) {
+            if (gettype ($id) === 'array' && count (array_filter (array_keys ($id), 'is_string')) == 0) {
+                $length = is_array ($id) ? count ($id) : 0;
+                $id = ($length > 1) ? $id : $id[0];
+            }
+        }
         return array (
             'info' => $response,
             'id' => $id,
@@ -751,7 +756,7 @@ class kraken extends Exchange {
             $request['start'] = intval ($since / 1000);
         $response = $this->privatePostOpenOrders (array_merge ($request, $params));
         $orders = $this->parse_orders($response['result']['open'], null, $since, $limit);
-        return $this->filter_orders_by_symbol($orders, $symbol);
+        return $this->filter_by_symbol($orders, $symbol);
     }
 
     public function fetch_closed_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
@@ -761,7 +766,7 @@ class kraken extends Exchange {
             $request['start'] = intval ($since / 1000);
         $response = $this->privatePostClosedOrders (array_merge ($request, $params));
         $orders = $this->parse_orders($response['result']['closed'], null, $since, $limit);
-        return $this->filter_orders_by_symbol($orders, $symbol);
+        return $this->filter_by_symbol($orders, $symbol);
     }
 
     public function fetch_deposit_methods ($code = null, $params = array ()) {

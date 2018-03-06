@@ -117,8 +117,8 @@ class kucoin (Exchange):
             },
             'fees': {
                 'trading': {
-                    'maker': 0.0010,
-                    'taker': 0.0010,
+                    'maker': 0.001,
+                    'taker': 0.001,
                 },
                 'funding': {
                     'tierBased': False,
@@ -174,13 +174,29 @@ class kucoin (Exchange):
                         'DRGN': 1.0,
                         'ACT': 0.1,
                     },
-                    'deposit': 0.00,
+                    'deposit': {},
                 },
+            },
+            # exchange-specific options
+            'options': {
+                'timeDifference': 0,  # the difference between system clock and Kucoin clock
+                'adjustForTimeDifference': False,  # controls the adjustment logic upon instantiation
             },
         })
 
+    def nonce(self):
+        return self.milliseconds() - self.options['timeDifference']
+
+    def load_time_difference(self):
+        response = self.publicGetOpenTick()
+        after = self.milliseconds()
+        self.options['timeDifference'] = int(after - response['timestamp'])
+        return self.options['timeDifference']
+
     def fetch_markets(self):
         response = self.publicGetMarketOpenSymbols()
+        if self.options['adjustForTimeDifference']:
+            self.load_time_difference()
         markets = response['data']
         result = []
         for i in range(0, len(markets)):
@@ -202,6 +218,8 @@ class kucoin (Exchange):
                 'base': base,
                 'quote': quote,
                 'active': active,
+                'taker': self.safe_float(market, 'feeRate'),
+                'maker': self.safe_float(market, 'feeRate'),
                 'info': market,
                 'lot': math.pow(10, -precision['amount']),
                 'precision': precision,
@@ -400,10 +418,10 @@ class kucoin (Exchange):
 
     def fetch_order(self, id, symbol=None, params={}):
         if symbol is None:
-            raise ExchangeError(self.id + ' fetchOrder requires a symbol')
+            raise ExchangeError(self.id + ' fetchOrder requires a symbol argument')
         orderType = self.safe_value(params, 'type')
         if orderType is None:
-            raise ExchangeError(self.id + ' fetchOrder requires parameter type=["BUY"|"SELL"]')
+            raise ExchangeError(self.id + ' fetchOrder requires a type parameter("BUY" or "SELL")')
         self.load_markets()
         market = self.market(symbol)
         request = {
@@ -697,7 +715,7 @@ class kucoin (Exchange):
         if api == 'private':
             self.check_required_credentials()
             # their nonce is always a calibrated synched milliseconds-timestamp
-            nonce = self.milliseconds()
+            nonce = self.nonce()
             queryString = ''
             nonce = str(nonce)
             if query:

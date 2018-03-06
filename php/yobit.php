@@ -61,6 +61,9 @@ class yobit extends liqui {
                     'withdraw' => array (),
                 ),
             ),
+            'options' => array (
+                'fetchOrdersRequiresSymbol' => true,
+            ),
         ));
     }
 
@@ -71,12 +74,14 @@ class yobit extends liqui {
             'ANT' => 'AntsCoin',
             'ATM' => 'Autumncoin',
             'BCC' => 'BCH',
+            'BCS' => 'BitcoinStake',
             'BTS' => 'Bitshares2',
             'DCT' => 'Discount',
             'DGD' => 'DarkGoldCoin',
             'ICN' => 'iCoin',
             'LIZI' => 'LiZi',
             'LUN' => 'LunarCoin',
+            'MDT' => 'Midnight',
             'NAV' => 'NavajoCoin',
             'OMG' => 'OMGame',
             'PAY' => 'EPAY',
@@ -94,12 +99,14 @@ class yobit extends liqui {
             'AntsCoin' => 'ANT',
             'Autumncoin' => 'ATM',
             'BCH' => 'BCC',
+            'BitcoinStake' => 'BCS',
             'Bitshares2' => 'BTS',
             'Discount' => 'DCT',
             'DarkGoldCoin' => 'DGD',
             'iCoin' => 'ICN',
             'LiZi' => 'LIZI',
             'LunarCoin' => 'LUN',
+            'Midnight' => 'MDT',
             'NavajoCoin' => 'NAV',
             'OMGame' => 'OMG',
             'EPAY' => 'PAY',
@@ -108,6 +115,18 @@ class yobit extends liqui {
         if (is_array ($substitutions) && array_key_exists ($commonCode, $substitutions))
             return $substitutions[$commonCode];
         return $commonCode;
+    }
+
+    public function parse_order_status ($status) {
+        $statuses = array (
+            '0' => 'open',
+            '1' => 'closed',
+            '2' => 'canceled',
+            '3' => 'open', // or partially-filled and closed? https://github.com/ccxt/ccxt/issues/1594
+        );
+        if (is_array ($statuses) && array_key_exists ($status, $statuses))
+            return $statuses[$status];
+        return $status;
     }
 
     public function fetch_balance ($params = array ()) {

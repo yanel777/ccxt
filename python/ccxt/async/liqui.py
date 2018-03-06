@@ -246,8 +246,8 @@ class liqui (Exchange):
         for i in range(0, len(ids)):
             id = ids[i]
             symbol = id
-            if id in self.marketsById:
-                market = self.marketsById[id]
+            if id in self.markets_by_id:
+                market = self.markets_by_id[id]
                 symbol = market['symbol']
             result[symbol] = self.parse_order_book(response[id])
         return result
@@ -418,15 +418,22 @@ class liqui (Exchange):
             self.orders[id]['status'] = 'canceled'
         return response
 
+    def parse_order_status(self, status):
+        statuses = {
+            '0': 'open',
+            '1': 'closed',
+            '2': 'canceled',
+            '3': 'canceled',  # or partially-filled and still open? https://github.com/ccxt/ccxt/issues/1594
+        }
+        if status in statuses:
+            return statuses[status]
+        return status
+
     def parse_order(self, order, market=None):
         id = str(order['id'])
-        status = self.safe_integer(order, 'status')
-        if status == 0:
-            status = 'open'
-        elif status == 1:
-            status = 'closed'
-        elif (status == 2) or (status == 3):
-            status = 'canceled'
+        status = self.safe_string(order, 'status')
+        if status != 'None':
+            status = self.parse_order_status(status)
         timestamp = int(order['timestamp_created']) * 1000
         symbol = None
         if not market:
@@ -525,12 +532,14 @@ class liqui (Exchange):
         return result
 
     async def fetch_orders(self, symbol=None, since=None, limit=None, params={}):
-        # if not symbol:
-        #     raise ExchangeError(self.id + ' fetchOrders requires a symbol')
+        if 'fetchOrdersRequiresSymbol' in self.options:
+            if self.options['fetchOrdersRequiresSymbol']:
+                if symbol is None:
+                    raise ExchangeError(self.id + ' fetchOrders requires a symbol argument')
         await self.load_markets()
         request = {}
         market = None
-        if symbol:
+        if symbol is not None:
             market = self.market(symbol)
             request['pair'] = market['id']
         response = await self.privatePostActiveOrders(self.extend(request, params))
@@ -539,24 +548,16 @@ class liqui (Exchange):
         if 'return' in response:
             openOrders = self.parse_orders(response['return'], market)
         allOrders = self.update_cached_orders(openOrders, symbol)
-        result = self.filter_orders_by_symbol(allOrders, symbol)
+        result = self.filter_by_symbol(allOrders, symbol)
         return self.filter_by_since_limit(result, since, limit)
 
     async def fetch_open_orders(self, symbol=None, since=None, limit=None, params={}):
         orders = await self.fetch_orders(symbol, since, limit, params)
-        result = []
-        for i in range(0, len(orders)):
-            if orders[i]['status'] == 'open':
-                result.append(orders[i])
-        return result
+        return self.filter_by(orders, 'status', 'open')
 
     async def fetch_closed_orders(self, symbol=None, since=None, limit=None, params={}):
         orders = await self.fetch_orders(symbol, since, limit, params)
-        result = []
-        for i in range(0, len(orders)):
-            if orders[i]['status'] == 'closed':
-                result.append(orders[i])
-        return result
+        return self.filter_by(orders, 'status', 'closed')
 
     async def fetch_my_trades(self, symbol=None, since=None, limit=None, params={}):
         await self.load_markets()
@@ -684,6 +685,8 @@ class liqui (Exchange):
                     elif message == 'Requests too often':
                         raise DDoSProtection(feedback)
                     elif message == 'not available':
+                        raise DDoSProtection(feedback)
+                    elif message == 'data unavailable':
                         raise DDoSProtection(feedback)
                     elif message == 'external service unavailable':
                         raise DDoSProtection(feedback)

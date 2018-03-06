@@ -17,7 +17,6 @@ module.exports = class bitcoincoid extends Exchange {
                 'CORS': false,
                 'createMarketOrder': false,
                 'fetchTickers': false,
-                'fetchOHLCV': false,
                 'fetchOrder': true,
                 'fetchOrders': false,
                 'fetchClosedOrders': true,
@@ -87,7 +86,7 @@ module.exports = class bitcoincoid extends Exchange {
                     'tierBased': false,
                     'percentage': true,
                     'maker': 0,
-                    'taker': 0.3,
+                    'taker': 0.003,
                 },
             },
         });
@@ -276,7 +275,7 @@ module.exports = class bitcoincoid extends Exchange {
         for (let i = 0; i < marketIds.length; i++) {
             let marketId = marketIds[i];
             let marketOrders = rawOrders[marketId];
-            market = this.marketsById[marketId];
+            market = this.markets_by_id[marketId];
             let parsedOrders = this.parseOrders (marketOrders, market, since, limit);
             exchangeOrders = this.arrayConcat (exchangeOrders, parsedOrders);
         }
@@ -297,7 +296,7 @@ module.exports = class bitcoincoid extends Exchange {
         let orders = this.parseOrders (response['return']['orders'], market, since, limit);
         orders = this.filterBy (orders, 'status', 'closed');
         if (symbol)
-            return this.filterOrdersBySymbol (orders, symbol);
+            return this.filterBySymbol (orders, symbol);
         return orders;
     }
 

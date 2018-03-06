@@ -249,10 +249,12 @@ class bittrex (Exchange):
         previous = self.safe_float(ticker, 'PrevDay')
         last = self.safe_float(ticker, 'Last')
         change = None
+        percentage = None
         if last is not None:
             if previous is not None:
+                change = last - previous
                 if previous > 0:
-                    change = (last - previous) / previous
+                    percentage = (change / previous) * 100
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -267,7 +269,7 @@ class bittrex (Exchange):
             'first': None,
             'last': last,
             'change': change,
-            'percentage': None,
+            'percentage': percentage,
             'average': None,
             'baseVolume': self.safe_float(ticker, 'Volume'),
             'quoteVolume': self.safe_float(ticker, 'BaseVolume'),
@@ -412,7 +414,7 @@ class bittrex (Exchange):
             request['market'] = market['id']
         response = self.marketGetOpenorders(self.extend(request, params))
         orders = self.parse_orders(response['result'], market, since, limit)
-        return self.filter_orders_by_symbol(orders, symbol)
+        return self.filter_by_symbol(orders, symbol)
 
     def create_order(self, symbol, type, side, amount, price=None, params={}):
         if type != 'limit':
@@ -444,20 +446,10 @@ class bittrex (Exchange):
 
     def cancel_order(self, id, symbol=None, params={}):
         self.load_markets()
-        response = None
-        try:
-            orderIdField = self.get_order_id_field()
-            request = {}
-            request[orderIdField] = id
-            response = self.marketGetCancel(self.extend(request, params))
-        except Exception as e:
-            if self.last_json_response:
-                message = self.safe_string(self.last_json_response, 'message')
-                if message == 'ORDER_NOT_OPEN':
-                    raise InvalidOrder(self.id + ' cancelOrder() error: ' + self.last_http_response)
-                if message == 'UUID_INVALID':
-                    raise OrderNotFound(self.id + ' cancelOrder() error: ' + self.last_http_response)
-            raise e
+        orderIdField = self.get_order_id_field()
+        request = {}
+        request[orderIdField] = id
+        response = self.marketGetCancel(self.extend(request, params))
         return response
 
     def parse_symbol(self, id):
@@ -566,7 +558,7 @@ class bittrex (Exchange):
         response = self.accountGetOrderhistory(self.extend(request, params))
         orders = self.parse_orders(response['result'], market, since, limit)
         if symbol:
-            return self.filter_orders_by_symbol(orders, symbol)
+            return self.filter_by_symbol(orders, symbol)
         return orders
 
     def fetch_closed_orders(self, symbol=None, since=None, limit=None, params={}):
@@ -648,23 +640,30 @@ class bittrex (Exchange):
 
     def throw_exception_on_error(self, response):
         if 'message' in response:
-            if response['message'] == 'APISIGN_NOT_PROVIDED':
+            message = self.safe_string(response, 'message')
+            if message == 'APISIGN_NOT_PROVIDED':
                 raise AuthenticationError(self.id + ' ' + self.json(response))
-            if response['message'] == 'INVALID_SIGNATURE':
+            if message == 'INVALID_SIGNATURE':
                 raise AuthenticationError(self.id + ' ' + self.json(response))
-            if response['message'] == 'INVALID_PERMISSION':
+            if message == 'INVALID_PERMISSION':
                 raise AuthenticationError(self.id + ' ' + self.json(response))
-            if response['message'] == 'INSUFFICIENT_FUNDS':
+            if message == 'INSUFFICIENT_FUNDS':
                 raise InsufficientFunds(self.id + ' ' + self.json(response))
-            if response['message'] == 'MIN_TRADE_REQUIREMENT_NOT_MET':
+            if message == 'QUANTITY_NOT_PROVIDED':
                 raise InvalidOrder(self.id + ' ' + self.json(response))
-            if response['message'] == 'APIKEY_INVALID':
+            if message == 'MIN_TRADE_REQUIREMENT_NOT_MET':
+                raise InvalidOrder(self.id + ' ' + self.json(response))
+            if message == 'APIKEY_INVALID':
                 if self.hasAlreadyAuthenticatedSuccessfully:
                     raise DDoSProtection(self.id + ' ' + self.json(response))
                 else:
                     raise AuthenticationError(self.id + ' ' + self.json(response))
-            if response['message'] == 'DUST_TRADE_DISALLOWED_MIN_VALUE_50K_SAT':
+            if message == 'DUST_TRADE_DISALLOWED_MIN_VALUE_50K_SAT':
                 raise InvalidOrder(self.id + ' order cost should be over 50k satoshi ' + self.json(response))
+            if message == 'ORDER_NOT_OPEN':
+                raise InvalidOrder(self.id + ' ' + self.json(response))
+            if message == 'UUID_INVALID':
+                raise OrderNotFound(self.id + ' ' + self.json(response))
 
     def handle_errors(self, code, reason, url, method, headers, body):
         if code >= 400:

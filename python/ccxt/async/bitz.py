@@ -20,7 +20,9 @@ class bitz (Exchange):
             'name': 'Bit-Z',
             'countries': 'HK',
             'rateLimit': 1000,
+            'version': 'v1',
             'has': {
+                'fetchBalance': False,  # so far the only exchange that has createOrder but not fetchBalance %)
                 'fetchTickers': True,
                 'fetchOHLCV': True,
                 'fetchOpenOrders': True,
@@ -36,7 +38,7 @@ class bitz (Exchange):
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/35862606-4f554f14-0b5d-11e8-957d-35058c504b6f.jpg',
                 'api': 'https://www.bit-z.com/api_v1',
-                'www': 'https://www.bit-z.com/',
+                'www': 'https://www.bit-z.com',
                 'doc': 'https://www.bit-z.com/api.html',
                 'fees': 'https://www.bit-z.com/about/fee',
             },
@@ -190,7 +192,7 @@ class bitz (Exchange):
         ids = list(tickers.keys())
         for i in range(0, len(ids)):
             id = ids[i]
-            market = self.marketsById[id]
+            market = self.markets_by_id[id]
             symbol = market['symbol']
             result[symbol] = self.parse_ticker(tickers[id], market)
         return result
@@ -248,10 +250,15 @@ class bitz (Exchange):
         ohlcv = self.unjson(response['data']['datas']['data'])
         return self.parse_ohlcvs(ohlcv, market, timeframe, since, limit)
 
-    def parse_order(self, order, market):
+    def parse_order(self, order, market=None):
         symbol = None
-        if market:
+        if market is not None:
             symbol = market['symbol']
+        side = self.safe_string(order, 'side')
+        if side is None:
+            side = self.safe_string(order, 'type')
+            if side is not None:
+                side = 'buy' if (side == 'in') else 'sell'
         return {
             'id': order['id'],
             'datetime': None,
@@ -259,7 +266,7 @@ class bitz (Exchange):
             'status': 'open',
             'symbol': symbol,
             'type': 'limit',
-            'side': order['type'],
+            'side': side,
             'price': order['price'],
             'cost': None,
             'amount': order['number'],
@@ -273,21 +280,23 @@ class bitz (Exchange):
     async def create_order(self, symbol, type, side, amount, price=None, params={}):
         await self.load_markets()
         market = self.market(symbol)
-        response = await self.privatePostTradeAdd(self.extend({
+        orderType = 'in' if (side == 'buy') else 'out'
+        request = {
             'coin': market['id'],
-            'type': side,
+            'type': orderType,
             'price': self.price_to_precision(symbol, price),
-            'number': self.amount_to_precision(symbol, amount),
+            'number': self.amount_to_string(symbol, amount),
             'tradepwd': self.password,
-        }, params))
-        order = {
-            'id': response['data'],
+        }
+        response = await self.privatePostTradeAdd(self.extend(request, params))
+        id = response['data']['id']
+        order = self.parse_order({
+            'id': id,
             'price': price,
             'number': amount,
-            'type': side,
-        }
-        id = order['id']
-        self.orders[id] = self.parse_order(order, market)
+            'side': side,
+        }, market)
+        self.orders[id] = order
         return order
 
     async def cancel_order(self, id, symbol=None, params={}):

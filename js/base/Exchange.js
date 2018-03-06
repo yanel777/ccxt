@@ -24,7 +24,8 @@ const {
     , now
     , sleep
     , timeout
-    , TimedOut } = functions
+    , TimedOut
+    , buildOHLCVC } = functions
 
 const {
     ExchangeError
@@ -72,6 +73,8 @@ module.exports = class Exchange {
                 'cancelOrders': false,
                 'createDepositAddress': false,
                 'createOrder': true,
+                'createMarketOrder': true,
+                'createLimitOrder': true,
                 'deposit': false,
                 'editOrder': 'emulated',
                 'fetchBalance': true,
@@ -83,7 +86,7 @@ module.exports = class Exchange {
                 'fetchL2OrderBook': true,
                 'fetchMarkets': true,
                 'fetchMyTrades': false,
-                'fetchOHLCV': false,
+                'fetchOHLCV': 'emulated',
                 'fetchOpenOrders': false,
                 'fetchOrder': false,
                 'fetchOrderBook': true,
@@ -165,8 +168,15 @@ module.exports = class Exchange {
         this.proxy = ''
         this.origin = '*' // CORS origin
 
-        this.iso8601          = timestamp => new Date (timestamp).toISOString ()
+        this.iso8601          = timestamp => ((typeof timestamp === 'undefined') ? timestamp : new Date (timestamp).toISOString ())
         this.parse8601        = x => Date.parse (((x.indexOf ('+') >= 0) || (x.slice (-1) === 'Z')) ? x : (x + 'Z'))
+        this.parseDate        = (x) => {
+            if (typeof x === 'undefined')
+                return x
+            return ((x.indexOf ('GMT') >= 0) ?
+                Date.parse (x) :
+                this.parse8601 (x))
+        }
         this.microseconds     = () => now () * 1000 // TODO: utilize performance.now for that purpose
         this.seconds          = () => Math.floor (now () / 1000)
 
@@ -395,7 +405,7 @@ module.exports = class Exchange {
                 title = match[1].trim ();
 
             let maintenance = responseBody.match (/offline|busy|retry|wait|unavailable|maintain|maintenance|maintenancing/i)
-            let ddosProtection = responseBody.match (/cloudflare|incapsula|overload/i)
+            let ddosProtection = responseBody.match (/cloudflare|incapsula|overload|ddos/i)
 
             if (e instanceof SyntaxError) {
 
@@ -463,6 +473,7 @@ module.exports = class Exchange {
 
             let responseHeaders = {}
             response.headers.forEach ((value, key) => {
+                key = key.split ('-').map (word => capitalize (word)).join ('-')
                 responseHeaders[key] = value;
             })
 
@@ -522,7 +533,7 @@ module.exports = class Exchange {
 
     async loadMarkets (reload = false) {
         if (!reload && this.markets) {
-            if (!this.marketsById) {
+            if (!this.markets_by_id) {
                 return this.setMarkets (this.markets)
             }
             return this.markets
@@ -539,8 +550,27 @@ module.exports = class Exchange {
         throw new NotSupported (this.id + ' fetchBidsAsks not supported yet')
     }
 
+    async fetchOHLCV (symbol, timeframe = '1m', since = undefined, limits = undefined, params = {}) {
+        if (!this.has['fetchTrades'])
+            throw new NotSupported (this.id + ' fetchOHLCV() not supported yet')
+        await this.loadMarkets ()
+        let trades = await this.fetchTrades (symbol, since, limits, params)
+        let ohlcvc = buildOHLCVC (trades, timeframe, since, limits)
+        return ohlcvc.map (c => c.slice (0, -1))
+    }
+
     fetchTickers (symbols = undefined, params = {}) {
         throw new NotSupported (this.id + ' fetchTickers not supported yet')
+    }
+
+    purgeCachedOrders (before) {
+        const orders = Object
+            .values (this.orders)
+            .filter (order =>
+                (order.status === 'open') ||
+                (order.timestamp >= before))
+        this.orders = indexBy (orders, 'id')
+        return this.orders
     }
 
     fetchOrder (id, symbol = undefined, params = {}) {
@@ -607,6 +637,34 @@ module.exports = class Exchange {
         throw new ExchangeError (this.id + ' does not have currency code ' + code)
     }
 
+    findMarket (string) {
+
+        if (typeof this.markets === 'undefined')
+            return new ExchangeError (this.id + ' markets not loaded')
+
+        if (typeof string === 'string') {
+
+            if (string in this.markets_by_id)
+                return this.markets_by_id[string]
+
+            if (string in this.markets)
+                return this.markets[string]
+        }
+
+        return string
+    }
+
+    findSymbol (string, market = undefined) {
+
+        if (typeof market === 'undefined')
+            market = this.findMarket (string)
+
+        if (typeof market === 'object')
+            return market['symbol']
+
+        return string
+    }
+
     market (symbol) {
 
         if (typeof this.markets === 'undefined')
@@ -619,7 +677,8 @@ module.exports = class Exchange {
     }
 
     marketId (symbol) {
-        return this.market (symbol).id || symbol
+        let market = this.market (symbol)
+        return (typeof market !== 'undefined' ? market['id'] : symbol)
     }
 
     marketIds (symbols) {
@@ -756,29 +815,43 @@ module.exports = class Exchange {
         return array
     }
 
+    filterBySymbolSinceLimit (array, symbol = undefined, since = undefined, limit = undefined) {
+
+        const symbolIsDefined = typeof symbol !== 'undefined'
+        const sinceIsDefined = typeof since !== 'undefined'
+
+        // single-pass filter for both symbol and since
+        if (symbolIsDefined || sinceIsDefined)
+            array = array.filter (entry =>
+                ((symbolIsDefined ? (entry.symbol === symbol)  : true) &&
+                 (sinceIsDefined  ? (entry.timestamp >= since) : true)))
+
+        if (typeof limit !== 'undefined')
+            array = array.slice (0, limit)
+
+        return array
+    }
+
     parseTrades (trades, market = undefined, since = undefined, limit = undefined) {
         let result = Object.values (trades || []).map (trade => this.parseTrade (trade, market))
-        result = sortBy (result, 'timestamp', true)
-        return this.filterBySinceLimit (result, since, limit)
+        result = sortBy (result, 'timestamp')
+        let symbol = (typeof market !== 'undefined') ? market['symbol'] : undefined
+        return this.filterBySymbolSinceLimit (result, symbol, since, limit)
     }
 
     parseOrders (orders, market = undefined, since = undefined, limit = undefined) {
         let result = Object.values (orders).map (order => this.parseOrder (order, market))
-        return this.filterBySinceLimit (result, since, limit)
+        result = sortBy (result, 'timestamp')
+        let symbol = (typeof market !== 'undefined') ? market['symbol'] : undefined
+        return this.filterBySymbolSinceLimit (result, symbol, since, limit)
     }
 
-    filterOrdersBySymbol (orders, symbol = undefined) {
-        let grouped = this.groupBy (orders, 'symbol')
-        if (symbol) {
-            if (symbol in grouped)
-                return grouped[symbol]
-            return []
-        }
-        return orders
+    filterBySymbol (array, symbol = undefined) {
+        return ((typeof symbol !== 'undefined') ? array.filter (entry => entry.symbol === symbol) : array)
     }
 
     parseOHLCV (ohlcv, market = undefined, timeframe = '1m', since = undefined, limit = undefined) {
-        return ohlcv
+        return Array.isArray (ohlcv) ? ohlcv.slice (0, 6) : ohlcv
     }
 
     parseOHLCVs (ohlcvs, market = undefined, timeframe = '1m', since = undefined, limit = undefined) {

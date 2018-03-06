@@ -65,6 +65,9 @@ class yobit (liqui):
                     'withdraw': {},
                 },
             },
+            'options': {
+                'fetchOrdersRequiresSymbol': True,
+            },
         })
 
     def common_currency_code(self, currency):
@@ -74,12 +77,14 @@ class yobit (liqui):
             'ANT': 'AntsCoin',
             'ATM': 'Autumncoin',
             'BCC': 'BCH',
+            'BCS': 'BitcoinStake',
             'BTS': 'Bitshares2',
             'DCT': 'Discount',
             'DGD': 'DarkGoldCoin',
             'ICN': 'iCoin',
             'LIZI': 'LiZi',
             'LUN': 'LunarCoin',
+            'MDT': 'Midnight',
             'NAV': 'NavajoCoin',
             'OMG': 'OMGame',
             'PAY': 'EPAY',
@@ -96,12 +101,14 @@ class yobit (liqui):
             'AntsCoin': 'ANT',
             'Autumncoin': 'ATM',
             'BCH': 'BCC',
+            'BitcoinStake': 'BCS',
             'Bitshares2': 'BTS',
             'Discount': 'DCT',
             'DarkGoldCoin': 'DGD',
             'iCoin': 'ICN',
             'LiZi': 'LIZI',
             'LunarCoin': 'LUN',
+            'Midnight': 'MDT',
             'NavajoCoin': 'NAV',
             'OMGame': 'OMG',
             'EPAY': 'PAY',
@@ -110,6 +117,17 @@ class yobit (liqui):
         if commonCode in substitutions:
             return substitutions[commonCode]
         return commonCode
+
+    def parse_order_status(self, status):
+        statuses = {
+            '0': 'open',
+            '1': 'closed',
+            '2': 'canceled',
+            '3': 'open',  # or partially-filled and closed? https://github.com/ccxt/ccxt/issues/1594
+        }
+        if status in statuses:
+            return statuses[status]
+        return status
 
     async def fetch_balance(self, params={}):
         await self.load_markets()

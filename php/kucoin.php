@@ -106,8 +106,8 @@ class kucoin extends Exchange {
             ),
             'fees' => array (
                 'trading' => array (
-                    'maker' => 0.0010,
-                    'taker' => 0.0010,
+                    'maker' => 0.001,
+                    'taker' => 0.001,
                 ),
                 'funding' => array (
                     'tierBased' => false,
@@ -163,14 +163,32 @@ class kucoin extends Exchange {
                         'DRGN' => 1.0,
                         'ACT' => 0.1,
                     ),
-                    'deposit' => 0.00,
+                    'deposit' => array (),
                 ),
+            ),
+            // exchange-specific options
+            'options' => array (
+                'timeDifference' => 0, // the difference between system clock and Kucoin clock
+                'adjustForTimeDifference' => false, // controls the adjustment logic upon instantiation
             ),
         ));
     }
 
+    public function nonce () {
+        return $this->milliseconds () - $this->options['timeDifference'];
+    }
+
+    public function load_time_difference () {
+        $response = $this->publicGetOpenTick ();
+        $after = $this->milliseconds ();
+        $this->options['timeDifference'] = intval ($after - $response['timestamp']);
+        return $this->options['timeDifference'];
+    }
+
     public function fetch_markets () {
         $response = $this->publicGetMarketOpenSymbols ();
+        if ($this->options['adjustForTimeDifference'])
+            $this->load_time_difference ();
         $markets = $response['data'];
         $result = array ();
         for ($i = 0; $i < count ($markets); $i++) {
@@ -192,6 +210,8 @@ class kucoin extends Exchange {
                 'base' => $base,
                 'quote' => $quote,
                 'active' => $active,
+                'taker' => $this->safe_float($market, 'feeRate'),
+                'maker' => $this->safe_float($market, 'feeRate'),
                 'info' => $market,
                 'lot' => pow (10, -$precision['amount']),
                 'precision' => $precision,
@@ -407,10 +427,10 @@ class kucoin extends Exchange {
 
     public function fetch_order ($id, $symbol = null, $params = array ()) {
         if ($symbol === null)
-            throw new ExchangeError ($this->id . ' fetchOrder requires a symbol');
+            throw new ExchangeError ($this->id . ' fetchOrder requires a $symbol argument');
         $orderType = $this->safe_value($params, 'type');
         if ($orderType === null)
-            throw new ExchangeError ($this->id . ' fetchOrder requires parameter type=["BUY"|"SELL"]');
+            throw new ExchangeError ($this->id . ' fetchOrder requires a type parameter ("BUY" or "SELL")');
         $this->load_markets();
         $market = $this->market ($symbol);
         $request = array (
@@ -733,7 +753,7 @@ class kucoin extends Exchange {
         if ($api === 'private') {
             $this->check_required_credentials();
             // their $nonce is always a calibrated synched milliseconds-timestamp
-            $nonce = $this->milliseconds ();
+            $nonce = $this->nonce ();
             $queryString = '';
             $nonce = (string) $nonce;
             if ($query) {

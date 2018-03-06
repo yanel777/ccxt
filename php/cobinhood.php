@@ -20,6 +20,10 @@ class cobinhood extends Exchange {
                 'fetchClosedOrders' => true,
                 'fetchOrder' => true,
             ),
+            'requiredCredentials' => array (
+                'apiKey' => true,
+                'secret' => false,
+            ),
             'timeframes' => array (
                 // the first two don't seem to work at all
                 '1m' => '1m',
@@ -346,14 +350,14 @@ class cobinhood extends Exchange {
         $balances = $response['result']['balances'];
         for ($i = 0; $i < count ($balances); $i++) {
             $balance = $balances[$i];
-            $id = $balance['currency'];
-            $currency = $this->common_currency_code($id);
+            $currency = $balance['currency'];
+            if (is_array ($this->currencies_by_id) && array_key_exists ($currency, $this->currencies_by_id))
+                $currency = $this->currencies_by_id[$currency]['code'];
             $account = array (
-                'free' => floatval ($balance['total']),
                 'used' => floatval ($balance['on_order']),
-                'total' => 0.0,
+                'total' => floatval ($balance['total']),
             );
-            $account['total'] = $this->sum ($account['free'], $account['used']);
+            $account['free'] = floatval ($account['total'] - $account['used']);
             $result[$currency] = $account;
         }
         return $this->parse_balance($result);
@@ -371,7 +375,7 @@ class cobinhood extends Exchange {
         $price = floatval ($order['price']);
         $amount = floatval ($order['size']);
         $filled = floatval ($order['filled']);
-        $remaining = $this->amount_to_precision($symbol, $amount - $filled);
+        $remaining = $amount - $filled;
         // new, queued, open, partially_filled, $filled, cancelled
         $status = $order['state'];
         if ($status === 'filled') {
@@ -381,15 +385,14 @@ class cobinhood extends Exchange {
         } else {
             $status = 'open';
         }
-        $side = $order['side'] === 'bid' ? 'buy' : 'sell';
+        $side = ($order['side'] === 'bid') ? 'buy' : 'sell';
         return array (
             'id' => $order['id'],
             'datetime' => $this->iso8601 ($timestamp),
             'timestamp' => $timestamp,
             'status' => $status,
             'symbol' => $symbol,
-            // $market, limit, stop, stop_limit, trailing_stop, fill_or_kill
-            'type' => $order['type'],
+            'type' => $order['type'], // $market, limit, stop, stop_limit, trailing_stop, fill_or_kill
             'side' => $side,
             'price' => $price,
             'cost' => $price * $amount,
@@ -405,13 +408,13 @@ class cobinhood extends Exchange {
     public function create_order ($symbol, $type, $side, $amount, $price = null, $params = array ()) {
         $this->load_markets();
         $market = $this->market ($symbol);
-        $side = ($side === 'sell' ? 'ask' : 'bid');
+        $side = ($side === 'sell') ? 'ask' : 'bid';
         $request = array (
             'trading_pair_id' => $market['id'],
             // $market, limit, stop, stop_limit
             'type' => $type,
             'side' => $side,
-            'size' => $this->amount_to_precision($symbol, $amount),
+            'size' => $this->amount_to_string($symbol, $amount),
         );
         if ($type !== 'market')
             $request['price'] = $this->price_to_precision($symbol, $price);
@@ -437,12 +440,22 @@ class cobinhood extends Exchange {
         return $this->parse_order($response['result']['order']);
     }
 
+    public function fetch_open_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
+        $this->load_markets();
+        $result = $this->privateGetTradingOrders ($params);
+        $orders = $this->parse_orders($result['result']['orders'], null, $since, $limit);
+        if ($symbol !== null)
+            return $this->filter_by_symbol($orders, $symbol);
+        return $orders;
+    }
+
     public function fetch_order_trades ($id, $symbol = null, $params = array ()) {
         $this->load_markets();
         $response = $this->privateGetTradingOrdersOrderIdTrades (array_merge (array (
             'order_id' => $id,
         ), $params));
-        return $this->parse_trades($response['result']);
+        $market = ($symbol === null) ? null : $this->market ($symbol);
+        return $this->parse_trades($response['result'], $market);
     }
 
     public function create_deposit_address ($code, $params = array ()) {
@@ -499,9 +512,9 @@ class cobinhood extends Exchange {
         $headers = array ();
         if ($api === 'private') {
             $this->check_required_credentials();
-            $headers['device_id'] = $this->apiKey;
-            $headers['nonce'] = $this->nonce ();
-            $headers['Authorization'] = $this->jwt ($query, $this->secret);
+            // $headers['device_id'] = $this->apiKey;
+            $headers['nonce'] = (string) $this->nonce ();
+            $headers['Authorization'] = $this->apiKey;
         }
         if ($method === 'GET') {
             $query = $this->urlencode ($query);

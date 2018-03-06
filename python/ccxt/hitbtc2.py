@@ -26,6 +26,7 @@ class hitbtc2 (hitbtc):
                 'createDepositAddress': True,
                 'fetchDepositAddress': True,
                 'CORS': True,
+                'editOrder': True,
                 'fetchCurrencies': True,
                 'fetchOHLCV': True,
                 'fetchTickers': True,
@@ -685,7 +686,7 @@ class hitbtc2 (hitbtc):
             float(ohlcv['max']),
             float(ohlcv['min']),
             float(ohlcv['close']),
-            float(ohlcv['volumeQuote']),
+            float(ohlcv['volume']),
         ]
 
     def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=None, params={}):
@@ -715,6 +716,23 @@ class hitbtc2 (hitbtc):
         symbol = None
         if market:
             symbol = market['symbol']
+        baseVolume = self.safe_float(ticker, 'volume')
+        quoteVolume = self.safe_float(ticker, 'volumeQuote')
+        open = self.safe_float(ticker, 'open')
+        last = self.safe_float(ticker, 'last')
+        change = None
+        percentage = None
+        average = None
+        if last is not None and open is not None:
+            change = last - open
+            average = self.sum(last, open) / 2
+            if open > 0:
+                percentage = change / open * 100
+        vwap = None
+        if quoteVolume is not None:
+            if baseVolume is not None:
+                if baseVolume > 0:
+                    vwap = quoteVolume / baseVolume
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -723,16 +741,16 @@ class hitbtc2 (hitbtc):
             'low': self.safe_float(ticker, 'low'),
             'bid': self.safe_float(ticker, 'bid'),
             'ask': self.safe_float(ticker, 'ask'),
-            'vwap': None,
-            'open': self.safe_float(ticker, 'open'),
-            'close': self.safe_float(ticker, 'close'),
-            'first': None,
-            'last': self.safe_float(ticker, 'last'),
-            'change': None,
-            'percentage': None,
-            'average': None,
-            'baseVolume': self.safe_float(ticker, 'volume'),
-            'quoteVolume': self.safe_float(ticker, 'volumeQuote'),
+            'vwap': vwap,
+            'open': open,
+            'close': last,
+            'last': last,
+            'previousClose': None,
+            'change': change,
+            'percentage': percentage,
+            'average': average,
+            'baseVolume': baseVolume,
+            'quoteVolume': quoteVolume,
             'info': ticker,
         }
 
@@ -832,6 +850,26 @@ class hitbtc2 (hitbtc):
         self.orders[id] = order
         return order
 
+    def edit_order(self, id, symbol, type, side, amount=None, price=None, params={}):
+        self.load_markets()
+        # their max accepted length is 32 characters
+        uuid = self.uuid()
+        parts = uuid.split('-')
+        requestClientId = ''.join(parts)
+        requestClientId = requestClientId[0:32]
+        request = {
+            'clientOrderId': id,
+            'requestClientId': requestClientId,
+        }
+        if amount is not None:
+            request['quantity'] = self.amount_to_precision(symbol, float(amount))
+        if price is not None:
+            request['price'] = self.price_to_precision(symbol, price)
+        response = self.privatePatchOrderClientOrderId(self.extend(request, params))
+        order = self.parse_order(response)
+        self.orders[order['id']] = order
+        return order
+
     def cancel_order(self, id, symbol=None, params={}):
         self.load_markets()
         return self.privateDeleteOrderClientOrderId(self.extend({
@@ -929,17 +967,19 @@ class hitbtc2 (hitbtc):
         if since is not None:
             request['from'] = self.iso8601(since)
         response = self.privateGetHistoryOrder(self.extend(request, params))
-        return self.parse_orders(response, market, since, limit)
+        orders = self.parse_orders(response, market)
+        orders = self.filter_by(orders, 'status', 'closed')
+        return self.filter_by_since_limit(orders, since, limit)
 
     def fetch_my_trades(self, symbol=None, since=None, limit=None, params={}):
         self.load_markets()
         request = {
             # 'symbol': 'BTC/USD',  # optional
-            # 'sort': 'DESC',  # or 'ASC'
-            # 'by': 'timestamp',  # or 'id'	String	timestamp by default, or id
-            # 'from':	'Datetime or Number',  # ISO 8601
-            # 'till':	'Datetime or Number',
-            # 'limit': 100,
+            # 'sort':   'DESC',  # or 'ASC'
+            # 'by':     'timestamp',  # or 'id' String timestamp by default, or id
+            # 'from':   'Datetime or Number',  # ISO 8601
+            # 'till':   'Datetime or Number',
+            # 'limit':  100,
             # 'offset': 0,
         }
         market = None

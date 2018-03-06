@@ -8,12 +8,14 @@ import hashlib
 import math
 import json
 from ccxt.base.errors import ExchangeError
+from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import InsufficientFunds
 from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
 from ccxt.base.errors import OrderNotCached
 from ccxt.base.errors import CancelPending
-from ccxt.base.errors import ExchangeNotAvailable
+from ccxt.base.errors import DDoSProtection
+from ccxt.base.errors import InvalidNonce
 
 
 class poloniex (Exchange):
@@ -28,6 +30,7 @@ class poloniex (Exchange):
                 'createDepositAddress': True,
                 'fetchDepositAddress': True,
                 'CORS': False,
+                'editOrder': True,
                 'createMarketOrder': False,
                 'fetchOHLCV': True,
                 'fetchMyTrades': True,
@@ -169,7 +172,7 @@ class poloniex (Exchange):
             ohlcv['high'],
             ohlcv['low'],
             ohlcv['close'],
-            ohlcv['volume'],
+            ohlcv['quoteVolume'],
         ]
 
     async def fetch_ohlcv(self, symbol, timeframe='5m', since=None, limit=None, params={}):
@@ -255,6 +258,15 @@ class poloniex (Exchange):
         symbol = None
         if market:
             symbol = market['symbol']
+        open = None
+        change = None
+        average = None
+        last = float(ticker['last'])
+        relativeChange = float(ticker['percentChange'])
+        if relativeChange != -1:
+            open = last / self.sum(1, relativeChange)
+            change = last - open
+            average = self.sum(last, open) / 2
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -264,13 +276,13 @@ class poloniex (Exchange):
             'bid': float(ticker['highestBid']),
             'ask': float(ticker['lowestAsk']),
             'vwap': None,
-            'open': None,
-            'close': None,
-            'first': None,
-            'last': float(ticker['last']),
-            'change': float(ticker['percentChange']),
-            'percentage': None,
-            'average': None,
+            'open': open,
+            'close': last,
+            'last': last,
+            'previousClose': None,
+            'change': change,
+            'percentage': relativeChange * 100,
+            'average': average,
             'baseVolume': float(ticker['quoteVolume']),
             'quoteVolume': float(ticker['baseVolume']),
             'info': ticker,
@@ -312,7 +324,7 @@ class poloniex (Exchange):
                 'name': currency['name'],
                 'active': active,
                 'status': status,
-                'fee': currency['txFee'],  # todo: redesign
+                'fee': self.safe_float(currency, 'txFee'),  # todo: redesign
                 'precision': precision,
                 'limits': {
                     'amount': {
@@ -731,20 +743,30 @@ class poloniex (Exchange):
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
     def handle_errors(self, code, reason, url, method, headers, body):
-        if body[0] == '{':
+        response = None
+        try:
             response = json.loads(body)
-            if 'error' in response:
-                error = response['error']
-                feedback = self.id + ' ' + self.json(response)
-                if error == 'Invalid order number, or you are not the person who placed the order.':
-                    raise OrderNotFound(feedback)
-                elif error.find('Total must be at least') >= 0:
-                    raise InvalidOrder(feedback)
-                elif error.find('Not enough') >= 0:
-                    raise InsufficientFunds(feedback)
-                elif error.find('Nonce must be greater') >= 0:
-                    raise ExchangeNotAvailable(feedback)
-                elif error.find('You have already called cancelOrder or moveOrder on self order.') >= 0:
-                    raise CancelPending(feedback)
-                else:
-                    raise ExchangeError(self.id + ': unknown error: ' + self.json(response))
+        except Exception as e:
+            # syntax error, resort to default error handler
+            return
+        if 'error' in response:
+            error = response['error']
+            feedback = self.id + ' ' + self.json(response)
+            if error == 'Invalid order number, or you are not the person who placed the order.':
+                raise OrderNotFound(feedback)
+            elif error == 'Order not found, or you are not the person who placed it.':
+                raise OrderNotFound(feedback)
+            elif error == 'Invalid API key/secret pair.':
+                raise AuthenticationError(feedback)
+            elif error == 'Please do not make more than 8 API calls per second.':
+                raise DDoSProtection(feedback)
+            elif error.find('Total must be at least') >= 0:
+                raise InvalidOrder(feedback)
+            elif error.find('Not enough') >= 0:
+                raise InsufficientFunds(feedback)
+            elif error.find('Nonce must be greater') >= 0:
+                raise InvalidNonce(feedback)
+            elif error.find('You have already called cancelOrder or moveOrder on self order.') >= 0:
+                raise CancelPending(feedback)
+            else:
+                raise ExchangeError(self.id + ': unknown error: ' + self.json(response))

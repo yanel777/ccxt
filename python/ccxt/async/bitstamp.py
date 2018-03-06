@@ -29,6 +29,7 @@ class bitstamp (Exchange):
             'version': 'v2',
             'has': {
                 'CORS': True,
+                'fetchDepositAddress': True,
                 'fetchOrder': True,
                 'fetchOpenOrders': True,
                 'fetchMyTrades': True,
@@ -279,6 +280,13 @@ class bitstamp (Exchange):
         # only if overrided externally
         side = self.safe_string(trade, 'side')
         orderId = self.safe_string(trade, 'order_id')
+        if orderId is None:
+            if side is None:
+                side = self.safe_integer(trade, 'type')
+                if side == 0:
+                    side = 'buy'
+                else:
+                    side = 'sell'
         price = self.safe_float(trade, 'price')
         amount = self.safe_float(trade, 'amount')
         id = self.safe_string(trade, 'tid')
@@ -301,6 +309,10 @@ class bitstamp (Exchange):
             amount = self.safe_float(trade, market['baseId'], amount)
             feeCurrency = market['quote']
             symbol = market['symbol']
+        cost = None
+        if price is not None:
+            if amount is not None:
+                cost = price * amount
         return {
             'id': id,
             'info': trade,
@@ -312,6 +324,7 @@ class bitstamp (Exchange):
             'side': side,
             'price': price,
             'amount': amount,
+            'cost': cost,
             'fee': {
                 'cost': feeCost,
                 'currency': feeCurrency,
@@ -406,6 +419,9 @@ class bitstamp (Exchange):
         id = self.safe_string(order, 'id')
         timestamp = None
         iso8601 = None
+        side = self.safe_string(order, 'type')
+        if side is not None:
+            side = 'sell' if (side == '1') else 'buy'
         datetimeString = self.safe_string(order, 'datetime')
         if datetimeString is not None:
             timestamp = self.parse8601(datetimeString)
@@ -417,14 +433,25 @@ class bitstamp (Exchange):
                 if marketId in self.markets_by_id:
                     market = self.markets_by_id[marketId]
         amount = self.safe_float(order, 'amount')
-        filled = 0
+        filled = 0.0
         trades = []
         transactions = self.safe_value(order, 'transactions')
+        feeCost = None
+        cost = None
         if transactions is not None:
             if isinstance(transactions, list):
                 for i in range(0, len(transactions)):
-                    trade = self.parse_trade(self.extend({'order_id': id}, transactions[i]), market)
+                    trade = self.parse_trade(self.extend({
+                        'order_id': id,
+                        'side': side,
+                    }, transactions[i]), market)
                     filled += trade['amount']
+                    if feeCost is None:
+                        feeCost = 0.0
+                    feeCost += trade['fee']['cost']
+                    if cost is None:
+                        cost = 0.0
+                    cost += trade['cost']
                     trades.append(trade)
         status = self.safe_string(order, 'status')
         if (status == 'In Queue') or (status == 'Open'):
@@ -437,15 +464,22 @@ class bitstamp (Exchange):
         if amount is not None:
             remaining = amount - filled
         price = self.safe_float(order, 'price')
-        side = self.safe_string(order, 'type')
-        if side is not None:
-            side = 'sell' if (side == '1') else 'buy'
-        fee = None
-        cost = None
         if market is None:
             market = self.get_market_from_trades(trades)
+        feeCurrency = None
         if market is not None:
             symbol = market['symbol']
+            feeCurrency = market['quote']
+        if cost is None:
+            if price is not None:
+                cost = price * filled
+        elif price is None:
+            if filled > 0:
+                price = cost / filled
+        fee = {
+            'cost': feeCost,
+            'currency': feeCurrency,
+        }
         return {
             'id': id,
             'datetime': iso8601,
@@ -484,9 +518,26 @@ class bitstamp (Exchange):
             return True
         return False
 
+    async def fetch_deposit_address(self, code, params={}):
+        if self.is_fiat(code):
+            raise NotSupported(self.id + ' fiat fetchDepositAddress() for ' + code + ' is not implemented yet')
+        name = self.get_currency_name(code)
+        v1 = (code == 'BTC')
+        method = 'v1' if v1 else 'private'  # v1 or v2
+        method += 'Post' + self.capitalize(name)
+        method += 'Deposit' if v1 else ''
+        method += 'Address'
+        response = await getattr(self, method)(params)
+        return {
+            'currency': code,
+            'status': 'ok',
+            'address': self.safe_string(response, 'address'),
+            'tag': self.safe_string(response, 'destination_tag'),
+            'info': response,
+        }
+
     async def withdraw(self, code, amount, address, tag=None, params={}):
-        isFiat = self.is_fiat(code)
-        if isFiat:
+        if self.is_fiat(code):
             raise NotSupported(self.id + ' fiat withdraw() for ' + code + ' is not implemented yet')
         name = self.get_currency_name(code)
         request = {

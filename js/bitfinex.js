@@ -23,11 +23,13 @@ module.exports = class bitfinex extends Exchange {
                 'fetchClosedOrders': true,
                 'fetchDepositAddress': true,
                 'fetchFees': true,
+                'fetchFundingFees': true,
                 'fetchMyTrades': true,
                 'fetchOHLCV': true,
                 'fetchOpenOrders': true,
                 'fetchOrder': true,
                 'fetchTickers': true,
+                'fetchTradingFees': true,
                 'withdraw': true,
             },
             'timeframes': {
@@ -365,9 +367,14 @@ module.exports = class bitfinex extends Exchange {
 
     async fetchOrderBook (symbol, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        let orderbook = await this.publicGetBookSymbol (this.extend ({
+        let request = {
             'symbol': this.marketId (symbol),
-        }, params));
+        };
+        if (typeof limit !== 'undefined') {
+            request['limit_bids'] = limit;
+            request['limit_asks'] = limit;
+        }
+        let orderbook = await this.publicGetBookSymbol (this.extend (request, params));
         return this.parseOrderBook (orderbook, undefined, 'bids', 'asks', 'price', 'amount');
     }
 
@@ -472,12 +479,16 @@ module.exports = class bitfinex extends Exchange {
         };
     }
 
-    async fetchTrades (symbol, since = undefined, limit = undefined, params = {}) {
+    async fetchTrades (symbol, since = undefined, limit = 50, params = {}) {
         await this.loadMarkets ();
         let market = this.market (symbol);
-        let response = await this.publicGetTradesSymbol (this.extend ({
+        let request = {
             'symbol': market['id'],
-        }, params));
+            'limit_trades': limit,
+        };
+        if (typeof since !== 'undefined')
+            request['timestamp'] = parseInt (since / 1000);
+        let response = await this.publicGetTradesSymbol (this.extend (request, params));
         return this.parseTrades (response, market, since, limit);
     }
 
@@ -611,7 +622,7 @@ module.exports = class bitfinex extends Exchange {
         ];
     }
 
-    async fetchOHLCV (symbol, timeframe = '1m', since = undefined, limit = undefined, params = {}) {
+    async fetchOHLCV (symbol, timeframe = '1m', since = undefined, limit = 100, params = {}) {
         await this.loadMarkets ();
         let market = this.market (symbol);
         let v2id = 't' + market['id'];
@@ -619,9 +630,8 @@ module.exports = class bitfinex extends Exchange {
             'symbol': v2id,
             'timeframe': this.timeframes[timeframe],
             'sort': 1,
+            'limit': limit,
         };
-        if (typeof limit !== 'undefined')
-            request['limit'] = limit;
         if (typeof since !== 'undefined')
             request['start'] = since;
         request = this.extend (request, params);
