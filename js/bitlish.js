@@ -115,23 +115,11 @@ module.exports = class bitlish extends Exchange {
                     ],
                 },
             },
+            'commonCurrencies': {
+                'DSH': 'DASH',
+                'XDG': 'DOGE',
+            },
         });
-    }
-
-    commonCurrencyCode (currency) {
-        if (!this.substituteCommonCurrencyCodes)
-            return currency;
-        if (currency === 'XBT')
-            return 'BTC';
-        if (currency === 'BCC')
-            return 'BCH';
-        if (currency === 'DRK')
-            return 'DASH';
-        if (currency === 'DSH')
-            currency = 'DASH';
-        if (currency === 'XDG')
-            currency = 'DOGE';
-        return currency;
     }
 
     async fetchMarkets () {
@@ -170,7 +158,9 @@ module.exports = class bitlish extends Exchange {
             'high': this.safeFloat (ticker, 'max'),
             'low': this.safeFloat (ticker, 'min'),
             'bid': undefined,
+            'bidVolume': undefined,
             'ask': undefined,
+            'askVolume': undefined,
             'vwap': undefined,
             'open': this.safeFloat (ticker, 'first'),
             'close': last,
@@ -322,6 +312,7 @@ module.exports = class bitlish extends Exchange {
     }
 
     async withdraw (currency, amount, address, tag = undefined, params = {}) {
+        this.checkAddress (address);
         await this.loadMarkets ();
         if (currency !== 'BTC') {
             // they did not document other types...

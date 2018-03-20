@@ -299,6 +299,11 @@ module.exports = class binance extends Exchange {
                     },
                 },
             },
+            'commonCurrencies': {
+                'YOYO': 'YOYOW',
+                'BCC': 'BCH',
+                'NANO': 'XRB',
+            },
             // exchange-specific options
             'options': {
                 'warnOnFetchOpenOrdersWithoutSymbol': true,
@@ -500,18 +505,7 @@ module.exports = class binance extends Exchange {
         for (let i = 0; i < rawTickers.length; i++) {
             tickers.push (this.parseTicker (rawTickers[i]));
         }
-        let tickersBySymbol = this.indexBy (tickers, 'symbol');
-        // return all of them if no symbols were passed in the first argument
-        if (typeof symbols === 'undefined')
-            return tickersBySymbol;
-        // otherwise filter by symbol
-        let result = {};
-        for (let i = 0; i < symbols.length; i++) {
-            let symbol = symbols[i];
-            if (symbol in tickersBySymbol)
-                result[symbol] = tickersBySymbol[symbol];
-        }
-        return result;
+        return this.filterByArray (tickers, 'symbol', symbols);
     }
 
     async fetchBidAsks (symbols = undefined, params = {}) {
@@ -760,17 +754,6 @@ module.exports = class binance extends Exchange {
         return this.parseTrades (response, market, since, limit);
     }
 
-    commonCurrencyCode (currency) {
-        const currencies = {
-            'YOYO': 'YOYOW',
-            'BCC': 'BCH',
-            'NANO': 'XRB',
-        };
-        if (currency in currencies)
-            return currencies[currency];
-        return currency;
-    }
-
     async fetchDepositAddress (code, params = {}) {
         await this.loadMarkets ();
         let currency = this.currency (code);
@@ -783,7 +766,7 @@ module.exports = class binance extends Exchange {
                 let tag = this.safeString (response, 'addressTag');
                 return {
                     'currency': code,
-                    'address': address,
+                    'address': this.checkAddress (address),
                     'tag': tag,
                     'status': 'ok',
                     'info': response,
@@ -794,6 +777,7 @@ module.exports = class binance extends Exchange {
     }
 
     async withdraw (code, amount, address, tag = undefined, params = {}) {
+        this.checkAddress (address);
         await this.loadMarkets ();
         let currency = this.currency (code);
         let name = address.slice (0, 20);

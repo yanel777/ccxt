@@ -19,6 +19,7 @@ class kuna extends acx {
                 'fetchTickers' => true,
                 'fetchOpenOrders' => true,
                 'fetchMyTrades' => true,
+                'withdraw' => false,
             ),
             'urls' => array (
                 'logo' => 'https://user-images.githubusercontent.com/1294454/31697638-912824fa-b3c1-11e7-8c36-cf9606eb94ac.jpg',
@@ -132,6 +133,7 @@ class kuna extends acx {
     }
 
     public function fetch_order_book ($symbol, $limit = null, $params = array ()) {
+        $this->load_markets();
         $market = $this->market ($symbol);
         $orderBook = $this->publicGetOrderBook (array_merge (array (
             'market' => $market['id'],
@@ -146,6 +148,7 @@ class kuna extends acx {
     public function fetch_open_orders ($symbol = null, $since = null, $limit = null, $params = array ()) {
         if (!$symbol)
             throw new ExchangeError ($this->id . ' fetchOpenOrders requires a $symbol argument');
+        $this->load_markets();
         $market = $this->market ($symbol);
         $orders = $this->privateGetOrders (array_merge (array (
             'market' => $market['id'],
@@ -175,6 +178,7 @@ class kuna extends acx {
     }
 
     public function fetch_trades ($symbol, $since = null, $limit = null, $params = array ()) {
+        $this->load_markets();
         $market = $this->market ($symbol);
         $response = $this->publicGetTrades (array_merge (array (
             'market' => $market['id'],
@@ -213,6 +217,7 @@ class kuna extends acx {
     public function fetch_my_trades ($symbol = null, $since = null, $limit = null, $params = array ()) {
         if (!$symbol)
             throw new ExchangeError ($this->id . ' fetchOpenOrders requires a $symbol argument');
+        $this->load_markets();
         $market = $this->market ($symbol);
         $response = $this->privateGetTradesMy (array ( 'market' => $market['id'] ));
         return $this->parse_my_trades ($response, $market);

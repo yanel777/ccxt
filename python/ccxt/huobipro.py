@@ -21,7 +21,7 @@ class huobipro (Exchange):
             'version': 'v1',
             'accounts': None,
             'accountsById': None,
-            'hostname': 'api.huobi.pro',
+            'hostname': 'api.huobipro.com',
             'has': {
                 'CORS': False,
                 'fetchOHCLV': True,
@@ -44,10 +44,10 @@ class huobipro (Exchange):
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/27766569-15aa7b9a-5edd-11e7-9e7f-44791f4ee49c.jpg',
-                'api': 'https://api.huobi.pro',
-                'www': 'https://www.huobi.pro',
+                'api': 'https://api.huobipro.com',
+                'www': 'https://www.huobipro.com',
                 'doc': 'https://github.com/huobiapi/API_Docs/wiki/REST_api_reference',
-                'fees': 'https://www.huobi.pro/about/fee/',
+                'fees': 'https://www.huobipro.com/about/fee/',
             },
             'api': {
                 'market': {
@@ -201,6 +201,7 @@ class huobipro (Exchange):
             'open': open,
             'close': close,
             'last': close,
+            'previousClose': None,
             'change': change,
             'percentage': percentage,
             'average': average,
@@ -444,6 +445,7 @@ class huobipro (Exchange):
             'currency': currency['id'].lower(),
         }, params))
         address = self.safe_string(response, 'data')
+        self.check_address(address)
         return {
             'currency': code,
             'status': 'ok',
@@ -468,6 +470,7 @@ class huobipro (Exchange):
         }
 
     def withdraw(self, currency, amount, address, tag=None, params={}):
+        self.check_address(address)
         request = {
             'address': address,  # only supports existing addresses in your withdraw address list
             'amount': amount,

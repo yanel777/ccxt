@@ -87,11 +87,6 @@ if (settings && settings.skip) {
     process.exit ()
 }
 
-const verboseList = []
-if (verboseList.indexOf (exchange.id) >= 0) {
-    exchange.verbose = true
-}
-
 //-----------------------------------------------------------------------------
 
 let countryName = function (code) {
@@ -102,10 +97,14 @@ let countryName = function (code) {
 
 let testSymbol = async (exchange, symbol) => {
 
-    await tests['fetchTicker']  (exchange, symbol)
-    await tests['fetchTickers'] (exchange, symbol)
-    await tests['fetchOHLCV']   (exchange, symbol)
-    await tests['fetchTrades']  (exchange, symbol)
+    // await tests['fetchMarkets']    (exchange)
+    // await tests['fetchCurrencies'] (exchange)
+    // process.exit ()
+
+    await tests['fetchTicker']     (exchange, symbol)
+    await tests['fetchTickers']    (exchange, symbol)
+    await tests['fetchOHLCV']      (exchange, symbol)
+    await tests['fetchTrades']     (exchange, symbol)
 
     if (exchange.id === 'coinmarketcap') {
 
@@ -124,7 +123,7 @@ let testSymbol = async (exchange, symbol) => {
 
 let loadExchange = async exchange => {
 
-    let markets  = await exchange.loadMarkets ()
+    let markets = await exchange.loadMarkets ()
 
     assert (typeof exchange.markets === 'object', '.markets is not an object')
     assert (Array.isArray (exchange.symbols), '.symbols is not an array')

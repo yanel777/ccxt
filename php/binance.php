@@ -298,6 +298,11 @@ class binance extends Exchange {
                     ),
                 ),
             ),
+            'commonCurrencies' => array (
+                'YOYO' => 'YOYOW',
+                'BCC' => 'BCH',
+                'NANO' => 'XRB',
+            ),
             // exchange-specific options
             'options' => array (
                 'warnOnFetchOpenOrdersWithoutSymbol' => true,
@@ -499,18 +504,7 @@ class binance extends Exchange {
         for ($i = 0; $i < count ($rawTickers); $i++) {
             $tickers[] = $this->parse_ticker($rawTickers[$i]);
         }
-        $tickersBySymbol = $this->index_by($tickers, 'symbol');
-        // return all of them if no $symbols were passed in the first argument
-        if ($symbols === null)
-            return $tickersBySymbol;
-        // otherwise filter by $symbol
-        $result = array ();
-        for ($i = 0; $i < count ($symbols); $i++) {
-            $symbol = $symbols[$i];
-            if (is_array ($tickersBySymbol) && array_key_exists ($symbol, $tickersBySymbol))
-                $result[$symbol] = $tickersBySymbol[$symbol];
-        }
-        return $result;
+        return $this->filter_by_array($tickers, 'symbol', $symbols);
     }
 
     public function fetch_bid_asks ($symbols = null, $params = array ()) {
@@ -759,17 +753,6 @@ class binance extends Exchange {
         return $this->parse_trades($response, $market, $since, $limit);
     }
 
-    public function common_currency_code ($currency) {
-        $currencies = array (
-            'YOYO' => 'YOYOW',
-            'BCC' => 'BCH',
-            'NANO' => 'XRB',
-        );
-        if (is_array ($currencies) && array_key_exists ($currency, $currencies))
-            return $currencies[$currency];
-        return $currency;
-    }
-
     public function fetch_deposit_address ($code, $params = array ()) {
         $this->load_markets();
         $currency = $this->currency ($code);
@@ -782,7 +765,7 @@ class binance extends Exchange {
                 $tag = $this->safe_string($response, 'addressTag');
                 return array (
                     'currency' => $code,
-                    'address' => $address,
+                    'address' => $this->check_address($address),
                     'tag' => $tag,
                     'status' => 'ok',
                     'info' => $response,
@@ -793,6 +776,7 @@ class binance extends Exchange {
     }
 
     public function withdraw ($code, $amount, $address, $tag = null, $params = array ()) {
+        $this->check_address($address);
         $this->load_markets();
         $currency = $this->currency ($code);
         $name = mb_substr ($address, 0, 20);

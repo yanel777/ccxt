@@ -532,19 +532,6 @@ module.exports = class hitbtc2 extends hitbtc {
         });
     }
 
-    commonCurrencyCode (currency) {
-        let currencies = {
-            'XBT': 'BTC',
-            'DRK': 'DASH',
-            'CAT': 'BitClave',
-            'USD': 'USDT',
-            'EMGO': 'MGO',
-        };
-        if (currency in currencies)
-            return currencies[currency];
-        return currency;
-    }
-
     feeToPrecision (symbol, fee) {
         return this.truncate (fee, 8);
     }
@@ -746,7 +733,9 @@ module.exports = class hitbtc2 extends hitbtc {
             'high': this.safeFloat (ticker, 'high'),
             'low': this.safeFloat (ticker, 'low'),
             'bid': this.safeFloat (ticker, 'bid'),
+            'bidVolume': undefined,
             'ask': this.safeFloat (ticker, 'ask'),
+            'askVolume': undefined,
             'vwap': vwap,
             'open': open,
             'close': last,
@@ -1050,6 +1039,7 @@ module.exports = class hitbtc2 extends hitbtc {
             'currency': currency['id'],
         });
         let address = response['address'];
+        this.checkAddress (address);
         let tag = this.safeString (response, 'paymentId');
         return {
             'currency': currency,
@@ -1067,6 +1057,7 @@ module.exports = class hitbtc2 extends hitbtc {
             'currency': currency['id'],
         });
         let address = response['address'];
+        this.checkAddress (address);
         let tag = this.safeString (response, 'paymentId');
         return {
             'currency': currency,
@@ -1078,6 +1069,7 @@ module.exports = class hitbtc2 extends hitbtc {
     }
 
     async withdraw (code, amount, address, tag = undefined, params = {}) {
+        this.checkAddress (address);
         let currency = this.currency (code);
         let request = {
             'currency': currency['id'],

@@ -21,6 +21,7 @@ class kuna (acx):
                 'fetchTickers': True,
                 'fetchOpenOrders': True,
                 'fetchMyTrades': True,
+                'withdraw': False,
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/31697638-912824fa-b3c1-11e7-8c36-cf9606eb94ac.jpg',
@@ -128,6 +129,7 @@ class kuna (acx):
         return markets
 
     def fetch_order_book(self, symbol, limit=None, params={}):
+        self.load_markets()
         market = self.market(symbol)
         orderBook = self.publicGetOrderBook(self.extend({
             'market': market['id'],
@@ -140,6 +142,7 @@ class kuna (acx):
     def fetch_open_orders(self, symbol=None, since=None, limit=None, params={}):
         if not symbol:
             raise ExchangeError(self.id + ' fetchOpenOrders requires a symbol argument')
+        self.load_markets()
         market = self.market(symbol)
         orders = self.privateGetOrders(self.extend({
             'market': market['id'],
@@ -167,6 +170,7 @@ class kuna (acx):
         }
 
     def fetch_trades(self, symbol, since=None, limit=None, params={}):
+        self.load_markets()
         market = self.market(symbol)
         response = self.publicGetTrades(self.extend({
             'market': market['id'],
@@ -201,6 +205,7 @@ class kuna (acx):
     def fetch_my_trades(self, symbol=None, since=None, limit=None, params={}):
         if not symbol:
             raise ExchangeError(self.id + ' fetchOpenOrders requires a symbol argument')
+        self.load_markets()
         market = self.market(symbol)
         response = self.privateGetTradesMy({'market': market['id']})
         return self.parse_my_trades(response, market)

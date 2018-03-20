@@ -1,17 +1,11 @@
 "use strict";
 
 const fs   = require ('fs')
-const path = require ('path')
-const log  = require ('ololog')
-const ansi = require ('ansicolor').nice
-
-// ----------------------------------------------------------------------------
-
-const { capitalize } = require ('./js/base/functions.js')
-
-// ----------------------------------------------------------------------------
-
-const errors = require ('./js/base/errors.js')
+    , path = require ('path')
+    , log  = require ('ololog')
+    , ansi = require ('ansicolor').nice
+    , { capitalize } = require ('./js/base/functions.js')
+    , errors = require ('./js/base/errors.js')
 
 // ---------------------------------------------------------------------------
 
@@ -68,6 +62,7 @@ const commonRegexes = [
     [ /\.parseOrders\s/g, '.parse_orders'],
     [ /\.parseOrderStatus\s/g, '.parse_order_status'],
     [ /\.parseOrder\s/g, '.parse_order'],
+    [ /\.filterByArray\s/g, '.filter_by_array'],
     [ /\.filterBySymbolSinceLimit\s/g, '.filter_by_symbol_since_limit'],
     [ /\.filterBySinceLimit\s/g, '.filter_by_since_limit'],
     [ /\.filterBySymbol\s/g, '.filter_by_symbol'],
@@ -117,6 +112,7 @@ const commonRegexes = [
     [ /\.throwExceptionOnError\s/g, '.throw_exception_on_error'],
     [ /\.handleErrors\s/g, '.handle_errors'],
     [ /\.checkRequiredCredentials\s/g, '.check_required_credentials'],
+    [ /\.checkAddress\s/g, '.check_address'],
 ]
 
 // ----------------------------------------------------------------------------
@@ -191,7 +187,7 @@ const pythonRegexes = [
         [ /Math\.abs\s*\(([^\)]+)\)/g, 'abs($1)' ],
         [ /Math\.pow\s*\(([^\)]+)\)/g, 'math.pow($1)' ],
         [ /Math\.round\s*\(([^\)]+)\)/g, 'int(round($1))' ],
-        [ /Math\.ceil\s*\(([^\)]+)\)/g, 'int(ceil($1))' ],
+        [ /Math\.ceil\s*\(([^\)]+)\)/g, 'int(math.ceil($1))' ],
         [ /Math\.log/g, 'math.log' ],
         [ /(\([^\)]+\)|[^\s]+)\s*\?\s*([^\:]+)\s+\:\s*([^\n]+)/g, '$2 if $1 else $3'],
         [ / \/\//g, ' #' ],
@@ -460,6 +456,10 @@ const pythonRegexes = [
             let signature = lines[0].trim ()
             let methodSignatureRegex = /(async |)([\S]+)\s\(([^)]*)\)\s*{/ // signature line
             let matches = methodSignatureRegex.exec (signature)
+
+            if (!matches) {
+                log.red (methods[i])
+            }
 
             // async or not
             let keyword = matches[1]

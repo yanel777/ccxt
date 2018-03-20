@@ -173,12 +173,14 @@ class coinmarketcap extends Exchange {
             'high' => null,
             'low' => null,
             'bid' => null,
+            'bidVolume' => null,
             'ask' => null,
+            'askVolume' => null,
             'vwap' => null,
             'open' => null,
-            'close' => null,
-            'first' => null,
+            'close' => $last,
             'last' => $last,
+            'previousClose' => null,
             'change' => $change,
             'percentage' => null,
             'average' => null,
@@ -199,7 +201,8 @@ class coinmarketcap extends Exchange {
         $tickers = array ();
         for ($t = 0; $t < count ($response); $t++) {
             $ticker = $response[$t];
-            $id = $ticker['id'] . '/' . $currency;
+            $currencyId = (is_array ($this->currencies) && array_key_exists ($currency, $this->currencies)) ? $this->currencies[$currency]['id'] : strtolower ($currency);
+            $id = $ticker['id'] . '/' . $currencyId;
             $symbol = $id;
             $market = null;
             if (is_array ($this->markets_by_id) && array_key_exists ($id, $this->markets_by_id)) {

@@ -116,22 +116,11 @@ class bitlish (Exchange):
                     ],
                 },
             },
+            'commonCurrencies': {
+                'DSH': 'DASH',
+                'XDG': 'DOGE',
+            },
         })
-
-    def common_currency_code(self, currency):
-        if not self.substituteCommonCurrencyCodes:
-            return currency
-        if currency == 'XBT':
-            return 'BTC'
-        if currency == 'BCC':
-            return 'BCH'
-        if currency == 'DRK':
-            return 'DASH'
-        if currency == 'DSH':
-            currency = 'DASH'
-        if currency == 'XDG':
-            currency = 'DOGE'
-        return currency
 
     def fetch_markets(self):
         markets = self.publicGetPairs()
@@ -167,7 +156,9 @@ class bitlish (Exchange):
             'high': self.safe_float(ticker, 'max'),
             'low': self.safe_float(ticker, 'min'),
             'bid': None,
+            'bidVolume': None,
             'ask': None,
+            'askVolume': None,
             'vwap': None,
             'open': self.safe_float(ticker, 'first'),
             'close': last,
@@ -304,6 +295,7 @@ class bitlish (Exchange):
         return self.privatePostCancelTrade({'id': id})
 
     def withdraw(self, currency, amount, address, tag=None, params={}):
+        self.check_address(address)
         self.load_markets()
         if currency != 'BTC':
             # they did not document other types...

@@ -531,19 +531,6 @@ class hitbtc2 extends hitbtc {
         ));
     }
 
-    public function common_currency_code ($currency) {
-        $currencies = array (
-            'XBT' => 'BTC',
-            'DRK' => 'DASH',
-            'CAT' => 'BitClave',
-            'USD' => 'USDT',
-            'EMGO' => 'MGO',
-        );
-        if (is_array ($currencies) && array_key_exists ($currency, $currencies))
-            return $currencies[$currency];
-        return $currency;
-    }
-
     public function fee_to_precision ($symbol, $fee) {
         return $this->truncate ($fee, 8);
     }
@@ -745,7 +732,9 @@ class hitbtc2 extends hitbtc {
             'high' => $this->safe_float($ticker, 'high'),
             'low' => $this->safe_float($ticker, 'low'),
             'bid' => $this->safe_float($ticker, 'bid'),
+            'bidVolume' => null,
             'ask' => $this->safe_float($ticker, 'ask'),
+            'askVolume' => null,
             'vwap' => $vwap,
             'open' => $open,
             'close' => $last,
@@ -1049,6 +1038,7 @@ class hitbtc2 extends hitbtc {
             'currency' => $currency['id'],
         ));
         $address = $response['address'];
+        $this->check_address($address);
         $tag = $this->safe_string($response, 'paymentId');
         return array (
             'currency' => $currency,
@@ -1066,6 +1056,7 @@ class hitbtc2 extends hitbtc {
             'currency' => $currency['id'],
         ));
         $address = $response['address'];
+        $this->check_address($address);
         $tag = $this->safe_string($response, 'paymentId');
         return array (
             'currency' => $currency,
@@ -1077,6 +1068,7 @@ class hitbtc2 extends hitbtc {
     }
 
     public function withdraw ($code, $amount, $address, $tag = null, $params = array ()) {
+        $this->check_address($address);
         $currency = $this->currency ($code);
         $request = array (
             'currency' => $currency['id'],

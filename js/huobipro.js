@@ -18,7 +18,7 @@ module.exports = class huobipro extends Exchange {
             'version': 'v1',
             'accounts': undefined,
             'accountsById': undefined,
-            'hostname': 'api.huobi.pro',
+            'hostname': 'api.huobipro.com',
             'has': {
                 'CORS': false,
                 'fetchOHCLV': true,
@@ -41,10 +41,10 @@ module.exports = class huobipro extends Exchange {
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/27766569-15aa7b9a-5edd-11e7-9e7f-44791f4ee49c.jpg',
-                'api': 'https://api.huobi.pro',
-                'www': 'https://www.huobi.pro',
+                'api': 'https://api.huobipro.com',
+                'www': 'https://www.huobipro.com',
                 'doc': 'https://github.com/huobiapi/API_Docs/wiki/REST_api_reference',
-                'fees': 'https://www.huobi.pro/about/fee/',
+                'fees': 'https://www.huobipro.com/about/fee/',
             },
             'api': {
                 'market': {
@@ -206,6 +206,7 @@ module.exports = class huobipro extends Exchange {
             'open': open,
             'close': close,
             'last': close,
+            'previousClose': undefined,
             'change': change,
             'percentage': percentage,
             'average': average,
@@ -480,6 +481,7 @@ module.exports = class huobipro extends Exchange {
             'currency': currency['id'].toLowerCase (),
         }, params));
         let address = this.safeString (response, 'data');
+        this.checkAddress (address);
         return {
             'currency': code,
             'status': 'ok',
@@ -507,6 +509,7 @@ module.exports = class huobipro extends Exchange {
     }
 
     async withdraw (currency, amount, address, tag = undefined, params = {}) {
+        this.checkAddress (address);
         let request = {
             'address': address, // only supports existing addresses in your withdraw address list
             'amount': amount,
