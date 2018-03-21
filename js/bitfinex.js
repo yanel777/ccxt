@@ -489,8 +489,16 @@ module.exports = class bitfinex extends Exchange {
 
     async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        let market = this.market (symbol);
-        let request = { 'symbol': market['id'] };
+        let market = undefined;
+        // fix: https://trello.com/c/rZnY9QCv
+        if (symbol) {
+            market = this.market (symbol);
+            symbol = market['id'];
+        } else {
+            // https://docs.bitfinex.com/v1/reference#rest-auth-past-trades
+            symbol = this.ids.join (',');
+        }
+        let request = { 'symbol': symbol };
         if (typeof limit !== 'undefined')
             request['limit_trades'] = limit;
         if (typeof since !== 'undefined')
