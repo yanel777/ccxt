@@ -44,6 +44,8 @@
     "qs": "6.5.1"
   },
   "devDependencies": {
+    "@types/jest": "^22.2.0",
+    "@types/lodash": "^4.14.105",
     "ansicolor": "^1.1.71",
     "as-table": "^1.0.31",
     "asciichart": "^1.5.7",
@@ -54,10 +56,16 @@
     "eslint": "^4.15.0",
     "eslint-config-airbnb-base": "^12.1.0",
     "eslint-plugin-import": "^2.8.0",
+    "isomorphic-fetch": "^2.2.1",
     "istanbul": "^0.4.5",
+    "jest": "^22.4.3",
+    "lodash": "^4.17.5",
     "mocha": "^3.5.3",
     "nyc": "^11.4.1",
-    "ololog": "^1.1.84"
+    "ololog": "^1.1.84",
+    "ts-jest": "^22.4.2",
+    "tslib": "^1.9.0",
+    "typescript": "^2.7.2"
   },
   "author": {
     "name": "Igor Kroitor",
