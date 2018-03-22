@@ -4,7 +4,7 @@ import {Exchange} from "ccxt";
 import * as ccxt from "ccxt";
 
 
-const exchangeId = 'huobipro';
+const exchangeId = 'quoinex';
 const timeout = 60000 * 5;
 jest.setTimeout(timeout);
 
@@ -33,7 +33,7 @@ describe(exchangeId, () => {
         expect(exchange).toBeTruthy();
     });
 
-    describe('fetchOpenOrders без указания символа', () => {
+    xdescribe('fetchOpenOrders без указания символа', () => {
 
         it('fetchOpenOrders', async () => {
             const result = await exchange.fetchOpenOrders();
@@ -44,11 +44,11 @@ describe(exchangeId, () => {
 
     });
 
-    xdescribe('fetchMyTrades без указания символа', () => {
+    describe('fetchMyTrades без указания символа', () => {
 
         it('fetchMyTrades', async () => {
-            // const result = await exchange.fetchMyTrades();
-            const result = await exchange.fetchTrades('abt/btc');
+            const result = await exchange.fetchMyTrades();
+            // const result = await exchange.fetchTrades('abt/btc');
             console.log('fetchMyTrades result', result);
 
             expect(result).toBeTruthy();

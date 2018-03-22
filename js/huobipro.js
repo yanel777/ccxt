@@ -27,6 +27,7 @@ module.exports = class huobipro extends Exchange {
                 'fetchOpenOrders': true,
                 'fetchDepositAddress': true,
                 'withdraw': true,
+                'fetchMyTrades': false,
             },
             'timeframes': {
                 '1m': '1min',
@@ -74,6 +75,7 @@ module.exports = class huobipro extends Exchange {
                         'order/matchresults', // 查询当前成交、历史成交
                         'dw/withdraw-virtual/addresses', // 查询虚拟币提现地址
                         'dw/deposit-virtual/addresses',
+                        'market/history/trade',
                     ],
                     'post': [
                         'order/orders/place', // 创建并执行一个新订单 (一步下单， 推荐使用)
@@ -347,10 +349,25 @@ module.exports = class huobipro extends Exchange {
     }
 
     async fetchOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        if (!symbol)
-            throw new ExchangeError (this.id + ' fetchOrders() requires a symbol parameter');
-        this.loadMarkets ();
-        let market = this.market (symbol);
+        // if (!symbol)
+        //     throw new ExchangeError (this.id + ' fetchOrders() requires a symbol parameter');
+        await this.loadMarkets ();
+        let market = undefined;
+        let symbolArg = undefined;
+        if (symbol) {
+            market = this.market (symbol);
+            symbolArg = market['id'];
+        } else {
+            // console.log ('this.ids', this.ids);
+            console.log ('this.markets', this.markets);
+            // console.log ('this.markets_by_id', this.markets_by_id);
+            // symbolArg = this.ids.join (',');
+            symbolArg = 'abtbtc,abteth,actbtc,acteth';
+            // symbolArg = this.markets.
+
+            console.log ('symbolArg', symbolArg);
+            console.log ('this.ids', this.ids.length);
+        }
         let status = undefined;
         if ('type' in params) {
             status = params['type'];
@@ -367,7 +384,7 @@ module.exports = class huobipro extends Exchange {
             throw new ExchangeError (this.id + ' fetchOrders() wrong type param or status param for spot market ' + symbol + ' (0 or "open" for unfilled or partial filled orders, 1 or "closed" for filled orders)');
         }
         let response = await this.privateGetOrderOrders (this.extend ({
-            'symbol': market['id'],
+            'symbol': symbolArg,
             'states': status,
         }));
         return this.parseOrders (response['data'], market, since, limit);
@@ -548,7 +565,7 @@ module.exports = class huobipro extends Exchange {
             let auth = this.urlencode (request);
             // unfortunately, PHP demands double quotes for the escaped newline symbol
             // eslint-disable-next-line quotes
-            let payload = [ method, this.hostname, url, auth ].join ("\n");
+            let payload = [method, this.hostname, url, auth].join ("\n");
             let signature = this.hmac (this.encode (payload), this.encode (this.secret), 'sha256', 'base64');
             auth += '&' + this.urlencode ({ 'Signature': signature });
             url += '?' + auth;
