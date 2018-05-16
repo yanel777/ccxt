@@ -16,12 +16,13 @@ class hitbtc (Exchange):
         return self.deep_extend(super(hitbtc, self).describe(), {
             'id': 'hitbtc',
             'name': 'HitBTC',
-            'countries': 'UK',
+            'countries': 'HK',
             'rateLimit': 1500,
             'version': '1',
             'has': {
                 'CORS': False,
                 'fetchTrades': True,
+                'fetchTickers': True,
                 'fetchOrder': True,
                 'fetchOpenOrders': True,
                 'fetchClosedOrders': True,
@@ -485,6 +486,7 @@ class hitbtc (Exchange):
                 },
             },
             'commonCurrencies': {
+                'BCC': 'BCC',
                 'XBT': 'BTC',
                 'DRK': 'DASH',
                 'CAT': 'BitClave',
@@ -501,12 +503,13 @@ class hitbtc (Exchange):
             id = market['symbol']
             baseId = market['commodity']
             quoteId = market['currency']
-            lot = float(market['lot'])
-            step = float(market['step'])
+            lot = self.safe_float(market, 'lot')
+            step = self.safe_float(market, 'step')
             base = self.common_currency_code(baseId)
             quote = self.common_currency_code(quoteId)
             symbol = base + '/' + quote
             result.append({
+                'info': market,
                 'id': id,
                 'symbol': symbol,
                 'base': base,
@@ -515,7 +518,7 @@ class hitbtc (Exchange):
                 'quoteId': quoteId,
                 'lot': lot,
                 'step': step,
-                'info': market,
+                'active': True,
                 'maker': self.safe_float(market, 'provideLiquidityRate'),
                 'taker': self.safe_float(market, 'takeLiquidityRate'),
                 'precision': {
@@ -646,13 +649,13 @@ class hitbtc (Exchange):
         symbol = None
         if market:
             symbol = market['symbol']
-        amount = float(trade['execQuantity'])
+        amount = self.safe_float(trade, 'execQuantity')
         if market:
             amount *= market['lot']
-        price = float(trade['execPrice'])
+        price = self.safe_float(trade, 'execPrice')
         cost = price * amount
         fee = {
-            'cost': float(trade['fee']),
+            'cost': self.safe_float(trade, 'fee'),
             'currency': None,
             'rate': None,
         }
@@ -774,6 +777,7 @@ class hitbtc (Exchange):
             'info': order,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
+            'lastTradeTimestamp': None,
             'status': status,
             'symbol': symbol,
             'type': order['type'],

@@ -18,9 +18,9 @@ module.exports = class cex extends Exchange {
                 'CORS': true,
                 'fetchTickers': true,
                 'fetchOHLCV': true,
+                'fetchOrder': true,
                 'fetchOpenOrders': true,
                 'fetchClosedOrders': true,
-                'fetchOrders': true,
                 'fetchDepositAddress': true,
             },
             'timeframes': {
@@ -142,8 +142,8 @@ module.exports = class cex extends Exchange {
                         'max': market['maxLotSize'],
                     },
                     'price': {
-                        'min': parseFloat (market['minPrice']),
-                        'max': parseFloat (market['maxPrice']),
+                        'min': this.safeFloat (market, 'minPrice'),
+                        'max': this.safeFloat (market, 'maxPrice'),
                     },
                     'cost': {
                         'min': market['minLotSizeS2'],
@@ -291,8 +291,8 @@ module.exports = class cex extends Exchange {
             'symbol': market['symbol'],
             'type': undefined,
             'side': trade['type'],
-            'price': parseFloat (trade['price']),
-            'amount': parseFloat (trade['amount']),
+            'price': this.safeFloat (trade, 'price'),
+            'amount': this.safeFloat (trade, 'amount'),
         };
     }
 
@@ -411,6 +411,7 @@ module.exports = class cex extends Exchange {
             'id': order['id'],
             'datetime': this.iso8601 (timestamp),
             'timestamp': timestamp,
+            'lastTradeTimestamp': undefined,
             'status': status,
             'symbol': symbol,
             'type': undefined,

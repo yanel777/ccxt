@@ -92,8 +92,8 @@ class lakebtc (Exchange):
         for i in range(0, len(ids)):
             id = ids[i]
             code = id
-            if id in self.currencies:
-                currency = self.currencies[id]
+            if id in self.currencies_by_id:
+                currency = self.currencies_by_id[id]
                 code = currency['code']
             balance = float(balances[id])
             account = {
@@ -172,8 +172,8 @@ class lakebtc (Exchange):
             'order': None,
             'type': None,
             'side': None,
-            'price': float(trade['price']),
-            'amount': float(trade['amount']),
+            'price': self.safe_float(trade, 'price'),
+            'amount': self.safe_float(trade, 'amount'),
         }
 
     async def fetch_trades(self, symbol, since=None, limit=None, params={}):

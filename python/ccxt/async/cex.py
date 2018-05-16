@@ -30,9 +30,9 @@ class cex (Exchange):
                 'CORS': True,
                 'fetchTickers': True,
                 'fetchOHLCV': True,
+                'fetchOrder': True,
                 'fetchOpenOrders': True,
                 'fetchClosedOrders': True,
-                'fetchOrders': True,
                 'fetchDepositAddress': True,
             },
             'timeframes': {
@@ -153,8 +153,8 @@ class cex (Exchange):
                         'max': market['maxLotSize'],
                     },
                     'price': {
-                        'min': float(market['minPrice']),
-                        'max': float(market['maxPrice']),
+                        'min': self.safe_float(market, 'minPrice'),
+                        'max': self.safe_float(market, 'maxPrice'),
                     },
                     'cost': {
                         'min': market['minLotSizeS2'],
@@ -289,8 +289,8 @@ class cex (Exchange):
             'symbol': market['symbol'],
             'type': None,
             'side': trade['type'],
-            'price': float(trade['price']),
-            'amount': float(trade['amount']),
+            'price': self.safe_float(trade, 'price'),
+            'amount': self.safe_float(trade, 'amount'),
         }
 
     async def fetch_trades(self, symbol, since=None, limit=None, params={}):
@@ -397,6 +397,7 @@ class cex (Exchange):
             'id': order['id'],
             'datetime': self.iso8601(timestamp),
             'timestamp': timestamp,
+            'lastTradeTimestamp': None,
             'status': status,
             'symbol': symbol,
             'type': None,

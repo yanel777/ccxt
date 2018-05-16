@@ -18,6 +18,7 @@ module.exports = class bitflyer extends Exchange {
             'has': {
                 'CORS': false,
                 'withdraw': true,
+                'fetchMyTrades': true,
                 'fetchOrders': true,
                 'fetchOrder': true,
                 'fetchOpenOrders': 'emulated',
@@ -39,6 +40,7 @@ module.exports = class bitflyer extends Exchange {
                         'getticker',
                         'getexecutions',
                         'gethealth',
+                        'getboardstate',
                         'getchats',
                     ],
                 },
@@ -156,16 +158,16 @@ module.exports = class bitflyer extends Exchange {
             'product_code': this.marketId (symbol),
         }, params));
         let timestamp = this.parse8601 (ticker['timestamp']);
-        let last = parseFloat (ticker['ltp']);
+        let last = this.safeFloat (ticker, 'ltp');
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
             'high': undefined,
             'low': undefined,
-            'bid': parseFloat (ticker['best_bid']),
+            'bid': this.safeFloat (ticker, 'best_bid'),
             'bidVolume': undefined,
-            'ask': parseFloat (ticker['best_ask']),
+            'ask': this.safeFloat (ticker, 'best_ask'),
             'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
@@ -175,7 +177,7 @@ module.exports = class bitflyer extends Exchange {
             'change': undefined,
             'percentage': undefined,
             'average': undefined,
-            'baseVolume': parseFloat (ticker['volume_by_product']),
+            'baseVolume': this.safeFloat (ticker, 'volume_by_product'),
             'quoteVolume': undefined,
             'info': ticker,
         };
@@ -191,6 +193,8 @@ module.exports = class bitflyer extends Exchange {
                 if (id in trade)
                     order = trade[id];
             }
+        if (typeof order === 'undefined')
+            order = this.safeString (trade, 'child_order_acceptance_id');
         let timestamp = this.parse8601 (trade['exec_date']);
         return {
             'id': trade['id'].toString (),
@@ -289,6 +293,7 @@ module.exports = class bitflyer extends Exchange {
             'info': order,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
+            'lastTradeTimestamp': undefined,
             'status': status,
             'symbol': symbol,
             'type': type,
@@ -338,11 +343,28 @@ module.exports = class bitflyer extends Exchange {
         throw new OrderNotFound (this.id + ' No order found with id ' + id);
     }
 
-    async withdraw (currency, amount, address, tag = undefined, params = {}) {
+    async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
+        if (typeof symbol === 'undefined')
+            throw new ExchangeError (this.id + ' fetchMyTrades requires a symbol argument');
+        await this.loadMarkets ();
+        let market = this.market (symbol);
+        let request = {
+            'product_code': market['id'],
+        };
+        if (limit)
+            request['count'] = limit;
+        let response = await this.privateGetGetexecutions (this.extend (request, params));
+        return this.parseTrades (response, market, since, limit);
+    }
+
+    async withdraw (code, amount, address, tag = undefined, params = {}) {
         this.checkAddress (address);
         await this.loadMarkets ();
+        if (code !== 'JPY' && code !== 'USD' && code !== 'EUR')
+            throw new ExchangeError (this.id + ' allows withdrawing JPY, USD, EUR only, ' + code + ' is not supported');
+        let currency = this.currency (code);
         let response = await this.privatePostWithdraw (this.extend ({
-            'currency_code': currency,
+            'currency_code': currency['id'],
             'amount': amount,
             // 'bank_account_id': 1234,
         }, params));
