@@ -258,8 +258,10 @@ module.exports = class kraken extends Exchange {
         for (let i = 0; i < keys.length; i++) {
             let id = keys[i];
             let market = markets['result'][id];
-            let base = market['base'];
-            let quote = market['quote'];
+            let baseId = market['base'];
+            let quoteId = market['quote'];
+            let base = baseId;
+            let quote = quoteId;
             // slicing moved to commonCurrencyCode
             // if ((base[0] === 'X') || (base[0] === 'Z'))
             //     base = base.slice (1);
@@ -285,6 +287,8 @@ module.exports = class kraken extends Exchange {
                 'symbol': symbol,
                 'base': base,
                 'quote': quote,
+                'baseId': baseId,
+                'quoteId': quoteId,
                 'darkpool': darkpool,
                 'info': market,
                 'altname': market['altname'],
@@ -604,14 +608,18 @@ module.exports = class kraken extends Exchange {
         for (let c = 0; c < currencies.length; c++) {
             let currency = currencies[c];
             let code = currency;
-            // X-ISO4217-A3 standard currency codes
+            if (code in this.currencies_by_id) {
+                code = this.currencies_by_id[code]['code'];
+            } else {
+                // X-ISO4217-A3 standard currency codes
             // slicing moved to commonCurrencyCode
             // if (code[0] === 'X') {
             //     code = code.slice (1);
             // } else if (code[0] === 'Z') {
             //     code = code.slice (1);
             // }
-            code = this.commonCurrencyCode (code);
+                code = this.commonCurrencyCode (code);
+            }
             let balance = parseFloat (balances[currency]);
             let account = {
                 'free': balance,
