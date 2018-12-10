@@ -12,24 +12,25 @@ module.exports = class wex extends liqui {
         return this.deepExtend (super.describe (), {
             'id': 'wex',
             'name': 'WEX',
-            'countries': 'NZ', // New Zealand
+            'countries': [ 'NZ' ], // New Zealand
             'version': '3',
             'has': {
                 'CORS': false,
                 'fetchTickers': true,
+                'fetchDepositAddress': true,
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/30652751-d74ec8f8-9e31-11e7-98c5-71469fcef03e.jpg',
                 'api': {
-                    'public': 'https://wex.nz/api',
-                    'private': 'https://wex.nz/tapi',
+                    'public': 'https://wex1.in/api',
+                    'private': 'https://wex1.in/tapi',
                 },
-                'www': 'https://wex.nz',
+                'www': 'https://wex1.in',
                 'doc': [
-                    'https://wex.nz/api/3/docs',
-                    'https://wex.nz/tapi/docs',
+                    'https://wex1.in/api/3/docs',
+                    'https://wex1.in/tapi/docs',
                 ],
-                'fees': 'https://wex.nz/fees',
+                'fees': 'https://wex1.in/fees',
             },
             'api': {
                 'public': {
@@ -83,6 +84,9 @@ module.exports = class wex extends liqui {
                     'external service unavailable': DDoSProtection,
                 },
             },
+            'commonCurrencies': {
+                'RUR': 'RUB',
+            },
         });
     }
 
@@ -91,6 +95,7 @@ module.exports = class wex extends liqui {
         let symbol = undefined;
         if (market)
             symbol = market['symbol'];
+        let last = this.safeFloat (ticker, 'last');
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -98,12 +103,14 @@ module.exports = class wex extends liqui {
             'high': this.safeFloat (ticker, 'high'),
             'low': this.safeFloat (ticker, 'low'),
             'bid': this.safeFloat (ticker, 'sell'),
+            'bidVolume': undefined,
             'ask': this.safeFloat (ticker, 'buy'),
+            'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
-            'close': undefined,
-            'first': undefined,
-            'last': this.safeFloat (ticker, 'last'),
+            'close': last,
+            'last': last,
+            'previousClose': undefined,
             'change': undefined,
             'percentage': undefined,
             'average': this.safeFloat (ticker, 'avg'),
@@ -113,13 +120,24 @@ module.exports = class wex extends liqui {
         };
     }
 
-    handleErrors (code, reason, url, method, headers, body) {
+    async fetchDepositAddress (code, params = {}) {
+        let request = { 'coinName': this.commonCurrencyCode (code) };
+        let response = await this.privatePostCoinDepositAddress (this.extend (request, params));
+        return {
+            'currency': code,
+            'address': response['return']['address'],
+            'tag': undefined,
+            'info': response,
+        };
+    }
+
+    handleErrors (code, reason, url, method, headers, body, response = undefined) {
         if (code === 200) {
             if (body[0] !== '{') {
                 // response is not JSON -> resort to default error handler
                 return;
             }
-            let response = JSON.parse (body);
+            response = JSON.parse (body);
             if ('success' in response) {
                 if (!response['success']) {
                     const error = this.safeString (response, 'error');
@@ -131,7 +149,7 @@ module.exports = class wex extends liqui {
                         return;
                     }
                     const feedback = this.id + ' ' + this.json (response);
-                    const messages = this.exceptions.messages;
+                    const messages = this.exceptions['messages'];
                     if (error in messages) {
                         throw new messages[error] (feedback);
                     }

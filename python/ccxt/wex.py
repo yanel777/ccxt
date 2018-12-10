@@ -17,24 +17,25 @@ class wex (liqui):
         return self.deep_extend(super(wex, self).describe(), {
             'id': 'wex',
             'name': 'WEX',
-            'countries': 'NZ',  # New Zealand
+            'countries': ['NZ'],  # New Zealand
             'version': '3',
             'has': {
                 'CORS': False,
                 'fetchTickers': True,
+                'fetchDepositAddress': True,
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/30652751-d74ec8f8-9e31-11e7-98c5-71469fcef03e.jpg',
                 'api': {
-                    'public': 'https://wex.nz/api',
-                    'private': 'https://wex.nz/tapi',
+                    'public': 'https://wex1.in/api',
+                    'private': 'https://wex1.in/tapi',
                 },
-                'www': 'https://wex.nz',
+                'www': 'https://wex1.in',
                 'doc': [
-                    'https://wex.nz/api/3/docs',
-                    'https://wex.nz/tapi/docs',
+                    'https://wex1.in/api/3/docs',
+                    'https://wex1.in/tapi/docs',
                 ],
-                'fees': 'https://wex.nz/fees',
+                'fees': 'https://wex1.in/fees',
             },
             'api': {
                 'public': {
@@ -88,6 +89,9 @@ class wex (liqui):
                     'external service unavailable': DDoSProtection,
                 },
             },
+            'commonCurrencies': {
+                'RUR': 'RUB',
+            },
         })
 
     def parse_ticker(self, ticker, market=None):
@@ -95,6 +99,7 @@ class wex (liqui):
         symbol = None
         if market:
             symbol = market['symbol']
+        last = self.safe_float(ticker, 'last')
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -102,12 +107,14 @@ class wex (liqui):
             'high': self.safe_float(ticker, 'high'),
             'low': self.safe_float(ticker, 'low'),
             'bid': self.safe_float(ticker, 'sell'),
+            'bidVolume': None,
             'ask': self.safe_float(ticker, 'buy'),
+            'askVolume': None,
             'vwap': None,
             'open': None,
-            'close': None,
-            'first': None,
-            'last': self.safe_float(ticker, 'last'),
+            'close': last,
+            'last': last,
+            'previousClose': None,
             'change': None,
             'percentage': None,
             'average': self.safe_float(ticker, 'avg'),
@@ -116,7 +123,17 @@ class wex (liqui):
             'info': ticker,
         }
 
-    def handle_errors(self, code, reason, url, method, headers, body):
+    def fetch_deposit_address(self, code, params={}):
+        request = {'coinName': self.common_currency_code(code)}
+        response = self.privatePostCoinDepositAddress(self.extend(request, params))
+        return {
+            'currency': code,
+            'address': response['return']['address'],
+            'tag': None,
+            'info': response,
+        }
+
+    def handle_errors(self, code, reason, url, method, headers, body, response=None):
         if code == 200:
             if body[0] != '{':
                 # response is not JSON -> resort to default error handler
@@ -131,7 +148,7 @@ class wex (liqui):
                         # returned by fetchOpenOrders if no open orders(fix for  #489) -> not an error
                         return
                     feedback = self.id + ' ' + self.json(response)
-                    messages = self.exceptions.messages
+                    messages = self.exceptions['messages']
                     if error in messages:
                         raise messages[error](feedback)
                     if error.find('It is not enough') >= 0:

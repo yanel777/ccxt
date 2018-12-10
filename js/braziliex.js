@@ -12,7 +12,7 @@ module.exports = class braziliex extends Exchange {
         return this.deepExtend (super.describe (), {
             'id': 'braziliex',
             'name': 'Braziliex',
-            'countries': 'BR',
+            'countries': [ 'BR' ],
             'rateLimit': 1000,
             'has': {
                 'fetchCurrencies': true,
@@ -27,6 +27,7 @@ module.exports = class braziliex extends Exchange {
                 'www': 'https://braziliex.com/',
                 'doc': 'https://braziliex.com/exchange/api.php',
                 'fees': 'https://braziliex.com/exchange/fees.php',
+                'referral': 'https://braziliex.com/?ref=5FE61AB6F6D67DA885BC98BA27223465',
             },
             'api': {
                 'public': {
@@ -50,6 +51,10 @@ module.exports = class braziliex extends Exchange {
                         'cancel_order',
                     ],
                 },
+            },
+            'commonCurrencies': {
+                'EPC': 'Epacoin',
+                'ABC': 'Anti Bureaucracy Coin',
             },
             'fees': {
                 'trading': {
@@ -75,11 +80,9 @@ module.exports = class braziliex extends Exchange {
             let uppercase = id.toUpperCase ();
             let code = this.commonCurrencyCode (uppercase);
             let active = this.safeInteger (currency, 'active') === 1;
-            let status = 'ok';
             let maintenance = this.safeInteger (currency, 'under_maintenance');
             if (maintenance !== 0) {
                 active = false;
-                status = 'maintenance';
             }
             let canWithdraw = this.safeInteger (currency, 'is_withdrawal_active') === 1;
             let canDeposit = this.safeInteger (currency, 'is_deposit_active') === 1;
@@ -90,7 +93,6 @@ module.exports = class braziliex extends Exchange {
                 'code': code,
                 'name': currency['name'],
                 'active': active,
-                'status': status,
                 'precision': precision,
                 'funding': {
                     'withdraw': {
@@ -130,7 +132,7 @@ module.exports = class braziliex extends Exchange {
         return result;
     }
 
-    async fetchMarkets () {
+    async fetchMarkets (params = {}) {
         let markets = await this.publicGetTicker ();
         let ids = Object.keys (markets);
         let result = [];
@@ -148,7 +150,6 @@ module.exports = class braziliex extends Exchange {
                 'amount': 8,
                 'price': 8,
             };
-            let lot = Math.pow (10, -precision['amount']);
             result.push ({
                 'id': id,
                 'symbol': symbol.toUpperCase (),
@@ -157,11 +158,10 @@ module.exports = class braziliex extends Exchange {
                 'baseId': baseId,
                 'quoteId': quoteId,
                 'active': active,
-                'lot': lot,
                 'precision': precision,
                 'limits': {
                     'amount': {
-                        'min': lot,
+                        'min': Math.pow (10, -precision['amount']),
                         'max': Math.pow (10, precision['amount']),
                     },
                     'price': {
@@ -183,24 +183,27 @@ module.exports = class braziliex extends Exchange {
         let symbol = market['symbol'];
         let timestamp = ticker['date'];
         ticker = ticker['ticker'];
+        let last = this.safeFloat (ticker, 'last');
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'high': parseFloat (ticker['highestBid24']),
-            'low': parseFloat (ticker['lowestAsk24']),
-            'bid': parseFloat (ticker['highestBid']),
-            'ask': parseFloat (ticker['lowestAsk']),
+            'high': this.safeFloat (ticker, 'highestBid24'),
+            'low': this.safeFloat (ticker, 'lowestAsk24'),
+            'bid': this.safeFloat (ticker, 'highestBid'),
+            'bidVolume': undefined,
+            'ask': this.safeFloat (ticker, 'lowestAsk'),
+            'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
-            'close': undefined,
-            'first': undefined,
-            'last': parseFloat (ticker['last']),
-            'change': parseFloat (ticker['percentChange']),
+            'close': last,
+            'last': last,
+            'previousClose': undefined,
+            'change': this.safeFloat (ticker, 'percentChange'),
             'percentage': undefined,
             'average': undefined,
-            'baseVolume': parseFloat (ticker['baseVolume24']),
-            'quoteVolume': parseFloat (ticker['quoteVolume24']),
+            'baseVolume': this.safeFloat (ticker, 'baseVolume24'),
+            'quoteVolume': this.safeFloat (ticker, 'quoteVolume24'),
             'info': ticker,
         };
     }
@@ -252,10 +255,10 @@ module.exports = class braziliex extends Exchange {
         } else {
             timestamp = this.parse8601 (trade['date']);
         }
-        let price = parseFloat (trade['price']);
-        let amount = parseFloat (trade['amount']);
+        let price = this.safeFloat (trade, 'price');
+        let amount = this.safeFloat (trade, 'amount');
         let symbol = market['symbol'];
-        let cost = parseFloat (trade['total']);
+        let cost = this.safeFloat (trade, 'total');
         let orderId = this.safeString (trade, 'order_number');
         return {
             'timestamp': timestamp,
@@ -304,7 +307,7 @@ module.exports = class braziliex extends Exchange {
 
     parseOrder (order, market = undefined) {
         let symbol = undefined;
-        if (!market) {
+        if (market === undefined) {
             let marketId = this.safeString (order, 'market');
             if (marketId)
                 if (marketId in this.markets_by_id)
@@ -315,12 +318,12 @@ module.exports = class braziliex extends Exchange {
         let timestamp = this.safeValue (order, 'timestamp');
         if (!timestamp)
             timestamp = this.parse8601 (order['date']);
-        let price = parseFloat (order['price']);
+        let price = this.safeFloat (order, 'price');
         let cost = this.safeFloat (order, 'total', 0.0);
         let amount = this.safeFloat (order, 'amount');
         let filledPercentage = this.safeFloat (order, 'progress');
         let filled = amount * filledPercentage;
-        let remaining = this.amountToPrecision (symbol, amount - filled);
+        let remaining = parseFloat (this.amountToPrecision (symbol, amount - filled));
         let info = order;
         if ('info' in info)
             info = order['info'];
@@ -328,6 +331,7 @@ module.exports = class braziliex extends Exchange {
             'id': order['order_number'],
             'datetime': this.iso8601 (timestamp),
             'timestamp': timestamp,
+            'lastTradeTimestamp': undefined,
             'status': 'open',
             'symbol': symbol,
             'type': 'limit',
@@ -415,14 +419,12 @@ module.exports = class braziliex extends Exchange {
             'currency': currency['id'],
         }, params));
         let address = this.safeString (response, 'deposit_address');
-        if (!address)
-            throw new ExchangeError (this.id + ' fetchDepositAddress failed: ' + this.last_http_response);
+        this.checkAddress (address);
         let tag = this.safeString (response, 'payment_id');
         return {
             'currency': code,
             'address': address,
             'tag': tag,
-            'status': 'ok',
             'info': response,
         };
     }

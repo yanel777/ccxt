@@ -3,7 +3,7 @@
 //  ---------------------------------------------------------------------------
 
 const Exchange = require ('./base/Exchange');
-const { ExchangeError, InsufficientFunds, OrderNotFound, OrderNotCached } = require ('./base/errors');
+const { ExchangeError, InsufficientFunds, InvalidOrder, OrderNotFound, OrderNotCached, InvalidNonce } = require ('./base/errors');
 
 //  ---------------------------------------------------------------------------
 
@@ -13,7 +13,8 @@ module.exports = class cryptopia extends Exchange {
             'id': 'cryptopia',
             'name': 'Cryptopia',
             'rateLimit': 1500,
-            'countries': 'NZ', // New Zealand
+            'countries': [ 'NZ' ], // New Zealand
+            'parseJsonResponse': false,
             'has': {
                 'CORS': false,
                 'createMarketOrder': false,
@@ -21,6 +22,10 @@ module.exports = class cryptopia extends Exchange {
                 'fetchCurrencies': true,
                 'fetchDepositAddress': true,
                 'fetchMyTrades': true,
+                'fetchTransactions': false,
+                'fetchWithdrawals': true,
+                'fetchDeposits': true,
+                'fetchOHLCV': true,
                 'fetchOrder': 'emulated',
                 'fetchOrderBooks': true,
                 'fetchOrders': 'emulated',
@@ -31,15 +36,34 @@ module.exports = class cryptopia extends Exchange {
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/29484394-7b4ea6e2-84c6-11e7-83e5-1fccf4b2dc81.jpg',
-                'api': 'https://www.cryptopia.co.nz/api',
+                'api': {
+                    'public': 'https://www.cryptopia.co.nz/api',
+                    'private': 'https://www.cryptopia.co.nz/api',
+                    'web': 'https://www.cryptopia.co.nz',
+                },
                 'www': 'https://www.cryptopia.co.nz',
+                'referral': 'https://www.cryptopia.co.nz/Register?referrer=kroitor',
                 'doc': [
-                    'https://www.cryptopia.co.nz/Forum/Category/45',
-                    'https://www.cryptopia.co.nz/Forum/Thread/255',
-                    'https://www.cryptopia.co.nz/Forum/Thread/256',
+                    'https://support.cryptopia.co.nz/csm?id=kb_article&sys_id=a75703dcdbb9130084ed147a3a9619bc',
+                    'https://support.cryptopia.co.nz/csm?id=kb_article&sys_id=40e9c310dbf9130084ed147a3a9619eb',
                 ],
             },
+            'timeframes': {
+                '15m': 15,
+                '30m': 30,
+                '1h': 60,
+                '2h': 120,
+                '4h': 240,
+                '12h': 720,
+                '1d': 1440,
+                '1w': 10080,
+            },
             'api': {
+                'web': {
+                    'get': [
+                        'Exchange/GetTradePairChart',
+                    ],
+                },
                 'public': {
                     'get': [
                         'GetCurrencies',
@@ -73,57 +97,54 @@ module.exports = class cryptopia extends Exchange {
                     ],
                 },
             },
+            'commonCurrencies': {
+                'ACC': 'AdCoin',
+                'BAT': 'BatCoin',
+                'BEAN': 'BITB', // rebranding, see issue #3380
+                'BLZ': 'BlazeCoin',
+                'BTG': 'Bitgem',
+                'CAN': 'CanYaCoin',
+                'CAT': 'Catcoin',
+                'CC': 'CCX',
+                'CMT': 'Comet',
+                'EPC': 'ExperienceCoin',
+                'FCN': 'Facilecoin',
+                'FT': 'Fabric Token',
+                'FUEL': 'FC2', // FuelCoin != FUEL
+                'HAV': 'Havecoin',
+                'HC': 'Harvest Masternode Coin', // != HyperCash
+                'HSR': 'HC',
+                'KARM': 'KARMA',
+                'LBTC': 'LiteBitcoin',
+                'LDC': 'LADACoin',
+                'MARKS': 'Bitmark',
+                'NET': 'NetCoin',
+                'PLC': 'Polcoin',
+                'RED': 'RedCoin',
+                'STC': 'StopTrumpCoin',
+                'QBT': 'Cubits',
+                'WRC': 'WarCoin',
+            },
+            'options': {
+                'fetchTickersErrors': true,
+            },
         });
     }
 
-    commonCurrencyCode (currency) {
-        const currencies = {
-            'ACC': 'AdCoin',
-            'BAT': 'BatCoin',
-            'CC': 'CCX',
-            'CMT': 'Comet',
-            'FCN': 'Facilecoin',
-            'NET': 'NetCoin',
-            'BTG': 'Bitgem',
-            'FUEL': 'FC2', // FuelCoin != FUEL
-            'QBT': 'Cubits',
-            'WRC': 'WarCoin',
-        };
-        if (currency in currencies)
-            return currencies[currency];
-        return currency;
-    }
-
-    currencyId (currency) {
-        const currencies = {
-            'AdCoin': 'ACC',
-            'BatCoin': 'BAT',
-            'CCX': 'CC',
-            'Comet': 'CMT',
-            'Cubits': 'QBT',
-            'Facilecoin': 'FCN',
-            'NetCoin': 'NET',
-            'Bitgem': 'BTG',
-            'FC2': 'FUEL',
-        };
-        if (currency in currencies)
-            return currencies[currency];
-        return currency;
-    }
-
-    async fetchMarkets () {
+    async fetchMarkets (params = {}) {
         let response = await this.publicGetGetTradePairs ();
         let result = [];
         let markets = response['Data'];
         for (let i = 0; i < markets.length; i++) {
             let market = markets[i];
-            let id = market['Id'];
-            let symbol = market['Label'];
-            let base = market['Symbol'];
-            let quote = market['BaseSymbol'];
-            base = this.commonCurrencyCode (base);
-            quote = this.commonCurrencyCode (quote);
-            symbol = base + '/' + quote;
+            let numericId = market['Id'];
+            let label = market['Label'];
+            let baseId = market['Symbol'];
+            let quoteId = market['BaseSymbol'];
+            let base = this.commonCurrencyCode (baseId);
+            let quote = this.commonCurrencyCode (quoteId);
+            let symbol = base + '/' + quote;
+            let id = baseId + '_' + quoteId;
             let precision = {
                 'amount': 8,
                 'price': 8,
@@ -141,7 +162,7 @@ module.exports = class cryptopia extends Exchange {
                 'amount': amountLimits,
                 'price': priceLimits,
                 'cost': {
-                    'min': priceLimits['min'] * amountLimits['min'],
+                    'min': market['MinimumBaseTrade'],
                     'max': undefined,
                 },
             };
@@ -149,17 +170,21 @@ module.exports = class cryptopia extends Exchange {
             result.push ({
                 'id': id,
                 'symbol': symbol,
+                'numericId': numericId,
                 'base': base,
                 'quote': quote,
+                'baseId': baseId,
+                'quoteId': quoteId,
                 'info': market,
                 'maker': market['TradeFee'] / 100,
                 'taker': market['TradeFee'] / 100,
-                'lot': limits['amount']['min'],
                 'active': active,
                 'precision': precision,
                 'limits': limits,
+                'label': label,
             });
         }
+        this.options['marketsByLabel'] = this.indexBy (result, 'label');
         return result;
     }
 
@@ -172,20 +197,61 @@ module.exports = class cryptopia extends Exchange {
         return this.parseOrderBook (orderbook, undefined, 'Buy', 'Sell', 'Price', 'Volume');
     }
 
+    async fetchOHLCV (symbol, timeframe = '15m', since = undefined, limit = undefined, params = {}) {
+        let dataRange = 0;
+        if (since !== undefined) {
+            const dataRanges = [
+                86400,
+                172800,
+                604800,
+                1209600,
+                2592000,
+                7776000,
+                15552000,
+            ];
+            const numDataRanges = dataRanges.length;
+            let now = this.seconds ();
+            let sinceSeconds = parseInt (since / 1000);
+            for (let i = 1; i < numDataRanges; i++) {
+                if ((now - sinceSeconds) > dataRanges[i]) {
+                    dataRange = i;
+                }
+            }
+        }
+        await this.loadMarkets ();
+        let market = this.market (symbol);
+        let request = {
+            'tradePairId': market['numericId'],
+            'dataRange': dataRange,
+            'dataGroup': this.timeframes[timeframe],
+        };
+        let response = await this.webGetExchangeGetTradePairChart (this.extend (request, params));
+        let candles = response['Candle'];
+        let volumes = response['Volume'];
+        for (let i = 0; i < candles.length; i++) {
+            candles[i].push (volumes[i]['basev']);
+        }
+        return this.parseOHLCVs (candles, market, timeframe, since, limit);
+    }
+
+    joinMarketIds (ids, glue = '-') {
+        let result = ids[0].toString ();
+        for (let i = 1; i < ids.length; i++) {
+            result += glue + ids[i].toString ();
+        }
+        return result;
+    }
+
     async fetchOrderBooks (symbols = undefined, params = {}) {
         await this.loadMarkets ();
-        let ids = undefined;
-        if (!symbols) {
-            ids = this.ids.join ('-');
-            // max URL length is 2083 symbols, including http schema, hostname, tld, etc...
-            if (ids.length > 2048) {
-                let numIds = this.ids.length;
-                throw new ExchangeError (this.id + ' has ' + numIds.toString () + ' symbols exceeding max URL length, you are required to specify a list of symbols in the first argument to fetchOrderBooks');
-            }
-        } else {
-            ids = this.marketIds (symbols);
-            ids = ids.join ('-');
+        if (symbols === undefined) {
+            throw new ExchangeError (this.id + ' fetchOrderBooks requires the symbols argument as of May 2018 (up to 5 symbols at max)');
         }
+        let numSymbols = symbols.length;
+        if (numSymbols > 5) {
+            throw new ExchangeError (this.id + ' fetchOrderBooks accepts 5 symbols at max');
+        }
+        let ids = this.joinMarketIds (this.marketIds (symbols));
         let response = await this.publicGetGetMarketOrderGroupsIds (this.extend ({
             'ids': ids,
         }, params));
@@ -193,10 +259,10 @@ module.exports = class cryptopia extends Exchange {
         let result = {};
         for (let i = 0; i < orderbooks.length; i++) {
             let orderbook = orderbooks[i];
-            let id = this.safeString (orderbook, 'TradePairId');
+            let id = this.safeString (orderbook, 'Market');
             let symbol = id;
-            if (id in this.marketsById) {
-                let market = this.marketsById[id];
+            if (id in this.markets_by_id) {
+                let market = this.markets_by_id[id];
                 symbol = market['symbol'];
             }
             result[symbol] = this.parseOrderBook (orderbook, undefined, 'Buy', 'Sell', 'Price', 'Volume');
@@ -207,27 +273,39 @@ module.exports = class cryptopia extends Exchange {
     parseTicker (ticker, market = undefined) {
         let timestamp = this.milliseconds ();
         let symbol = undefined;
-        if (market)
+        if (market !== undefined)
             symbol = market['symbol'];
+        let open = this.safeFloat (ticker, 'Open');
+        let last = this.safeFloat (ticker, 'LastPrice');
+        let change = last - open;
+        let baseVolume = this.safeFloat (ticker, 'Volume');
+        let quoteVolume = this.safeFloat (ticker, 'BaseVolume');
+        let vwap = undefined;
+        if (quoteVolume !== undefined)
+            if (baseVolume !== undefined)
+                if (baseVolume > 0)
+                    vwap = quoteVolume / baseVolume;
         return {
             'symbol': symbol,
             'info': ticker,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'high': parseFloat (ticker['High']),
-            'low': parseFloat (ticker['Low']),
-            'bid': parseFloat (ticker['BidPrice']),
-            'ask': parseFloat (ticker['AskPrice']),
-            'vwap': undefined,
-            'open': parseFloat (ticker['Open']),
-            'close': parseFloat (ticker['Close']),
-            'first': undefined,
-            'last': parseFloat (ticker['LastPrice']),
-            'change': parseFloat (ticker['Change']),
-            'percentage': undefined,
-            'average': undefined,
-            'baseVolume': parseFloat (ticker['Volume']),
-            'quoteVolume': parseFloat (ticker['BaseVolume']),
+            'high': this.safeFloat (ticker, 'High'),
+            'low': this.safeFloat (ticker, 'Low'),
+            'bid': this.safeFloat (ticker, 'BidPrice'),
+            'bidVolume': undefined,
+            'ask': this.safeFloat (ticker, 'AskPrice'),
+            'askVolume': undefined,
+            'vwap': vwap,
+            'open': open,
+            'close': last,
+            'last': last,
+            'previousClose': undefined,
+            'change': change,
+            'percentage': this.safeFloat (ticker, 'Change'),
+            'average': this.sum (last, open) / 2,
+            'baseVolume': baseVolume,
+            'quoteVolume': quoteVolume,
         };
     }
 
@@ -248,15 +326,18 @@ module.exports = class cryptopia extends Exchange {
         let tickers = response['Data'];
         for (let i = 0; i < tickers.length; i++) {
             let ticker = tickers[i];
-            let id = ticker['TradePairId'];
+            let id = ticker['Label'].replace ('/', '_');
             let recognized = (id in this.markets_by_id);
-            if (!recognized)
-                throw new ExchangeError (this.id + ' fetchTickers() returned unrecognized pair id ' + id);
-            let market = this.markets_by_id[id];
-            let symbol = market['symbol'];
-            result[symbol] = this.parseTicker (ticker, market);
+            if (!recognized) {
+                if (this.options['fetchTickersErrors'])
+                    throw new ExchangeError (this.id + ' fetchTickers() returned unrecognized pair id ' + id.toString ());
+            } else {
+                let market = this.markets_by_id[id];
+                let symbol = market['symbol'];
+                result[symbol] = this.parseTicker (ticker, market);
+            }
         }
-        return result;
+        return this.filterByArray (result, 'symbol', symbols);
     }
 
     parseTrade (trade, market = undefined) {
@@ -271,14 +352,16 @@ module.exports = class cryptopia extends Exchange {
             price = this.safeFloat (trade, 'Rate');
         let cost = this.safeFloat (trade, 'Total');
         let id = this.safeString (trade, 'TradeId');
-        if (!market) {
-            if ('TradePairId' in trade)
-                if (trade['TradePairId'] in this.markets_by_id)
-                    market = this.markets_by_id[trade['TradePairId']];
+        if (market === undefined) {
+            let marketId = this.safeString (trade, 'Market');
+            marketId = marketId.replace ('/', '_');
+            if (marketId in this.markets_by_id) {
+                market = this.markets_by_id[marketId];
+            }
         }
         let symbol = undefined;
         let fee = undefined;
-        if (market) {
+        if (market !== undefined) {
             symbol = market['symbol'];
             if ('Fee' in trade) {
                 fee = {
@@ -307,10 +390,10 @@ module.exports = class cryptopia extends Exchange {
         await this.loadMarkets ();
         let market = this.market (symbol);
         let hours = 24; // the default
-        if (typeof since !== 'undefined') {
+        if (since !== undefined) {
             let elapsed = this.milliseconds () - since;
             let hour = 1000 * 60 * 60;
-            hours = parseInt (elapsed / hour);
+            hours = parseInt (Math.ceil (elapsed / hour));
         }
         let request = {
             'id': market['id'],
@@ -321,13 +404,120 @@ module.exports = class cryptopia extends Exchange {
         return this.parseTrades (trades, market, since, limit);
     }
 
+    parseTransaction (transaction, currency = undefined) {
+        //
+        // fetchWithdrawals
+        //
+        //     {
+        //         Id: 937355,
+        //         Currency: 'BTC',
+        //         TxId: '5ba7784576cee48bfb9d1524abf7bdade3de65e0f2f9cdd25f7bef2c506cf296',
+        //         Type: 'Withdraw',
+        //         Amount: 0.7,
+        //         Fee: 0,
+        //         Status: 'Complete',
+        //         Confirmations: 0,
+        //         Timestamp: '2017-10-10T18:39:03.8928376',
+        //         Address: '14KyZTusAZZGEmZzxsWf4pee7ThtA2iv2E',
+        //     }
+        //
+        // fetchDeposits
+        //     {
+        //         Id: 7833741,
+        //         Currency: 'BCH',
+        //         TxId: '0000000000000000011865af4122fe3b144e2cbeea86142e8ff2fb4107352d43',
+        //         Type: 'Deposit',
+        //         Amount: 0.0003385,
+        //         Fee: 0,
+        //         Status: 'Confirmed',
+        //         Confirmations: 6,
+        //         Timestamp: '2017-08-01T16:19:24',
+        //         Address: null
+        //     }
+        //
+        let timestamp = this.parse8601 (this.safeString (transaction, 'Timestamp'));
+        let code = undefined;
+        let currencyId = this.safeString (transaction, 'Currency');
+        currency = this.safeValue (this.currencies_by_id, currencyId);
+        if (currency === undefined) {
+            code = this.commonCurrencyCode (currencyId);
+        }
+        if (currency !== undefined) {
+            code = currency['code'];
+        }
+        let status = this.safeString (transaction, 'Status');
+        let txid = this.safeString (transaction, 'TxId');
+        if (status !== undefined) {
+            status = this.parseTransactionStatus (status);
+        }
+        const id = this.safeString (transaction, 'Id');
+        const type = this.parseTransactionType (this.safeString (transaction, 'Type'));
+        const amount = this.safeFloat (transaction, 'Amount');
+        const address = this.safeString (transaction, 'Address');
+        let feeCost = this.safeFloat (transaction, 'Fee');
+        return {
+            'info': transaction,
+            'id': id,
+            'currency': code,
+            'amount': amount,
+            'address': address,
+            'tag': undefined,
+            'status': status,
+            'type': type,
+            'updated': undefined,
+            'txid': txid,
+            'timestamp': timestamp,
+            'datetime': this.iso8601 (timestamp),
+            'fee': {
+                'currency': code,
+                'cost': feeCost,
+            },
+        };
+    }
+
+    parseTransactionStatus (status) {
+        const statuses = {
+            'Confirmed': 'ok',
+            'Complete': 'ok',
+            'Pending': 'pending',
+        };
+        return this.safeString (statuses, status, status);
+    }
+
+    parseTransactionType (type) {
+        const types = {
+            'Withdraw': 'withdrawal',
+            'Deposit': 'deposit',
+        };
+        return this.safeString (types, type, type);
+    }
+
+    async fetchTransactionsByType (type, code = undefined, since = undefined, limit = undefined, params = {}) {
+        let request = {
+            'type': (type === 'deposit') ? 'Deposit' : 'Withdraw',
+        };
+        let response = await this.privatePostGetTransactions (this.extend (request, params));
+        return this.parseTransactions (response['Data'], code, since, limit);
+    }
+
+    async fetchWithdrawals (code = undefined, since = undefined, limit = undefined, params = {}) {
+        return await this.fetchTransactionsByType ('withdrawal', code, since, limit, params);
+    }
+
+    async fetchDeposits (code = undefined, since = undefined, limit = undefined, params = {}) {
+        return await this.fetchTransactionsByType ('deposit', code, since, limit, params);
+    }
+
     async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         let request = {};
         let market = undefined;
-        if (symbol) {
+        if (symbol !== undefined) {
             market = this.market (symbol);
-            request['TradePairId'] = market['id'];
+            request['Market'] = market['id'];
+        }
+        if (limit !== undefined) {
+            request['Count'] = limit; // default 100
         }
         let response = await this.privatePostGetTradeHistory (this.extend (request, params));
         return this.parseTrades (response['Data'], market, since, limit);
@@ -383,7 +573,7 @@ module.exports = class cryptopia extends Exchange {
 
     async fetchBalance (params = {}) {
         await this.loadMarkets ();
-        let response = await this.privatePostGetBalance ();
+        let response = await this.privatePostGetBalance (params);
         let balances = response['Data'];
         let result = { 'info': response };
         for (let i = 0; i < balances.length; i++) {
@@ -409,7 +599,7 @@ module.exports = class cryptopia extends Exchange {
         // price = parseFloat (price);
         // amount = parseFloat (amount);
         let request = {
-            'TradePairId': market['id'],
+            'Market': market['id'],
             'Type': this.capitalize (side),
             // 'Rate': this.priceToPrecision (symbol, price),
             // 'Amount': this.amountToPrecision (symbol, amount),
@@ -421,33 +611,30 @@ module.exports = class cryptopia extends Exchange {
             throw new ExchangeError (this.id + ' createOrder returned unknown error: ' + this.json (response));
         let id = undefined;
         let filled = 0.0;
+        let status = 'open';
         if ('Data' in response) {
             if ('OrderId' in response['Data']) {
                 if (response['Data']['OrderId']) {
                     id = response['Data']['OrderId'].toString ();
-                }
-            }
-            if ('FilledOrders' in response['Data']) {
-                let filledOrders = response['Data']['FilledOrders'];
-                let filledOrdersLength = filledOrders.length;
-                if (filledOrdersLength) {
-                    filled = undefined;
+                } else {
+                    filled = amount;
+                    status = 'closed';
                 }
             }
         }
-        let timestamp = this.milliseconds ();
         let order = {
             'id': id,
-            'timestamp': timestamp,
-            'datetime': this.iso8601 (timestamp),
-            'status': 'open',
+            'timestamp': undefined,
+            'datetime': undefined,
+            'lastTradeTimestamp': undefined,
+            'status': status,
             'symbol': symbol,
             'type': type,
             'side': side,
             'price': price,
             'cost': price * amount,
             'amount': amount,
-            'remaining': amount,
+            'remaining': amount - filled,
             'filled': filled,
             'fee': undefined,
             // 'trades': this.parseTrades (order['trades'], market),
@@ -465,6 +652,8 @@ module.exports = class cryptopia extends Exchange {
                 'Type': 'Trade',
                 'OrderId': id,
             }, params));
+            // We do not know if it is indeed canceled, but cryptopia lacks any
+            // reasonable method to get information on executed or canceled order.
             if (id in this.orders)
                 this.orders[id]['status'] = 'canceled';
         } catch (e) {
@@ -477,33 +666,50 @@ module.exports = class cryptopia extends Exchange {
             }
             throw e;
         }
-        return response;
+        return this.parseOrder (response);
     }
 
     parseOrder (order, market = undefined) {
         let symbol = undefined;
-        if (market) {
+        if (market !== undefined) {
             symbol = market['symbol'];
         } else if ('Market' in order) {
             let id = order['Market'];
             if (id in this.markets_by_id) {
                 market = this.markets_by_id[id];
                 symbol = market['symbol'];
+            } else {
+                if (id in this.options['marketsByLabel']) {
+                    market = this.options['marketsByLabel'][id];
+                    symbol = market['symbol'];
+                }
             }
         }
-        let timestamp = this.parse8601 (order['TimeStamp']);
+        let timestamp = this.parse8601 (this.safeString (order, 'TimeStamp'));
         let amount = this.safeFloat (order, 'Amount');
         let remaining = this.safeFloat (order, 'Remaining');
-        let filled = amount - remaining;
+        let filled = undefined;
+        if (amount !== undefined && remaining !== undefined) {
+            filled = amount - remaining;
+        }
+        let id = this.safeValue (order, 'OrderId');
+        if (id !== undefined) {
+            id = id.toString ();
+        }
+        let side = this.safeString (order, 'Type');
+        if (side !== undefined) {
+            side = side.toLowerCase ();
+        }
         return {
-            'id': order['OrderId'].toString (),
+            'id': id,
             'info': this.omit (order, 'status'),
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'status': order['status'],
+            'lastTradeTimestamp': undefined,
+            'status': this.safeString (order, 'status'),
             'symbol': symbol,
             'type': 'limit',
-            'side': order['Type'].toLowerCase (),
+            'side': side,
             'price': this.safeFloat (order, 'Rate'),
             'cost': this.safeFloat (order, 'Total'),
             'amount': amount,
@@ -515,15 +721,18 @@ module.exports = class cryptopia extends Exchange {
     }
 
     async fetchOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        if (!symbol)
-            throw new ExchangeError (this.id + ' fetchOrders requires a symbol param');
         await this.loadMarkets ();
-        let market = this.market (symbol);
-        let response = await this.privatePostGetOpenOrders ({
+        let market = undefined;
+        let request = {
             // 'Market': market['id'],
-            'TradePairId': market['id'], // Cryptopia identifier (not required if 'Market' supplied)
+            // 'TradePairId': market['id'], // Cryptopia identifier (not required if 'Market' supplied)
             // 'Count': 100, // default = 100
-        }, params);
+        };
+        if (symbol !== undefined) {
+            market = this.market (symbol);
+            request['Market'] = market['id'];
+        }
+        let response = await this.privatePostGetOpenOrders (this.extend (request, params));
         let orders = [];
         for (let i = 0; i < response['Data'].length; i++) {
             orders.push (this.extend (response['Data'][i], { 'status': 'open' }));
@@ -542,16 +751,18 @@ module.exports = class cryptopia extends Exchange {
             } else {
                 let order = this.orders[id];
                 if (order['status'] === 'open') {
-                    this.orders[id] = this.extend (order, {
-                        'status': 'closed',
-                        'cost': order['amount'] * order['price'],
-                        'filled': order['amount'],
-                        'remaining': 0.0,
-                    });
+                    if ((symbol === undefined) || (order['symbol'] === symbol)) {
+                        this.orders[id] = this.extend (order, {
+                            'status': 'closed',
+                            'cost': order['amount'] * order['price'],
+                            'filled': order['amount'],
+                            'remaining': 0.0,
+                        });
+                    }
                 }
             }
             let order = this.orders[id];
-            if (order['symbol'] === symbol)
+            if ((symbol === undefined) || (order['symbol'] === symbol))
                 result.push (order);
         }
         return this.filterBySinceLimit (result, since, limit);
@@ -587,26 +798,32 @@ module.exports = class cryptopia extends Exchange {
         return result;
     }
 
-    async fetchDepositAddress (currency, params = {}) {
-        let currencyId = this.currencyId (currency);
+    async fetchDepositAddress (code, params = {}) {
+        await this.loadMarkets ();
+        let currency = this.currency (code);
         let response = await this.privatePostGetDepositAddress (this.extend ({
-            'Currency': currencyId,
+            'Currency': currency['id'],
         }, params));
         let address = this.safeString (response['Data'], 'BaseAddress');
-        if (!address)
-            address = this.safeString (response['Data'], 'Address');
+        let tag = this.safeString (response['Data'], 'Address');
+        if (address === undefined) {
+            address = tag;
+        }
+        this.checkAddress (address);
         return {
-            'currency': currency,
+            'currency': code,
             'address': address,
-            'status': 'ok',
+            'tag': tag,
             'info': response,
         };
     }
 
-    async withdraw (currency, amount, address, tag = undefined, params = {}) {
-        let currencyId = this.currencyId (currency);
+    async withdraw (code, amount, address, tag = undefined, params = {}) {
+        await this.loadMarkets ();
+        let currency = this.currency (code);
+        this.checkAddress (address);
         let request = {
-            'Currency': currencyId,
+            'Currency': currency['id'],
             'Amount': amount,
             'Address': address, // Address must exist in you AddressBook in security settings
         };
@@ -620,12 +837,9 @@ module.exports = class cryptopia extends Exchange {
     }
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
-        let url = this.urls['api'] + '/' + this.implodeParams (path, params);
+        let url = this.urls['api'][api] + '/' + this.implodeParams (path, params);
         let query = this.omit (params, this.extractParams (path));
-        if (api === 'public') {
-            if (Object.keys (query).length)
-                url += '?' + this.urlencode (query);
-        } else {
+        if (api === 'private') {
             this.checkRequiredCredentials ();
             let nonce = this.nonce ().toString ();
             body = this.json (query, { 'convertArraysToObjects': true });
@@ -641,21 +855,69 @@ module.exports = class cryptopia extends Exchange {
                 'Content-Type': 'application/json',
                 'Authorization': auth,
             };
+        } else {
+            if (Object.keys (query).length)
+                url += '?' + this.urlencode (query);
         }
         return { 'url': url, 'method': method, 'body': body, 'headers': headers };
     }
 
+    nonce () {
+        return this.milliseconds ();
+    }
+
+    handleErrors (code, reason, url, method, headers, body, response = undefined) {
+        if (typeof body !== 'string')
+            return; // fallback to default error handler
+        if (body.length < 2)
+            return; // fallback to default error handler
+        const fixedJSONString = this.sanitizeBrokenJSONString (body);
+        if (fixedJSONString[0] === '{') {
+            let response = JSON.parse (fixedJSONString);
+            if ('Success' in response) {
+                const success = this.safeValue (response, 'Success');
+                if (success !== undefined) {
+                    if (!success) {
+                        let error = this.safeString (response, 'Error');
+                        let feedback = this.id;
+                        if (typeof error === 'string') {
+                            feedback = feedback + ' ' + error;
+                            if (error.indexOf ('Invalid trade amount') >= 0) {
+                                throw new InvalidOrder (feedback);
+                            }
+                            if (error.indexOf ('No matching trades found') >= 0) {
+                                throw new OrderNotFound (feedback);
+                            }
+                            if (error.indexOf ('does not exist') >= 0) {
+                                throw new OrderNotFound (feedback);
+                            }
+                            if (error.indexOf ('Insufficient Funds') >= 0) {
+                                throw new InsufficientFunds (feedback);
+                            }
+                            if (error.indexOf ('Nonce has already been used') >= 0) {
+                                throw new InvalidNonce (feedback);
+                            }
+                        } else {
+                            feedback = feedback + ' ' + fixedJSONString;
+                        }
+                        throw new ExchangeError (feedback);
+                    }
+                }
+            }
+        }
+    }
+
+    sanitizeBrokenJSONString (jsonString) {
+        // sometimes cryptopia will return a unicode symbol before actual JSON string.
+        const indexOfBracket = jsonString.indexOf ('{');
+        if (indexOfBracket >= 0) {
+            return jsonString.slice (indexOfBracket);
+        }
+        return jsonString;
+    }
+
     async request (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
         let response = await this.fetch2 (path, api, method, params, headers, body);
-        if (response) {
-            if ('Success' in response)
-                if (response['Success']) {
-                    return response;
-                } else if ('Error' in response) {
-                    if (response['Error'] === 'Insufficient Funds.')
-                        throw new InsufficientFunds (this.id + ' ' + this.json (response));
-                }
-        }
-        throw new ExchangeError (this.id + ' ' + this.json (response));
+        return this.parseIfJsonEncodedObject (this.sanitizeBrokenJSONString (response));
     }
 };

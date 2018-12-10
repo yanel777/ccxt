@@ -29,6 +29,9 @@ const ccxt        = require ('../../ccxt.js')
             'fetchOHLCV',
             'fetchBalance',
             'createOrder',
+            'createMarketOrder',
+            'createLimitOrder',
+            'editOrder',
             'cancelOrder',
             'fetchOrder',
             'fetchOrders',
@@ -37,6 +40,7 @@ const ccxt        = require ('../../ccxt.js')
             'fetchMyTrades',
             'fetchCurrencies',
             'fetchDepositAddress',
+            'createDepositAddress',
             'withdraw',
 
         ].forEach (key => {

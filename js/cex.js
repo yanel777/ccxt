@@ -3,7 +3,7 @@
 //  ---------------------------------------------------------------------------
 
 const Exchange = require ('./base/Exchange');
-const { ExchangeError, InvalidOrder } = require ('./base/errors');
+const { ExchangeError, ArgumentsRequired, NullResponse, InvalidOrder, NotSupported } = require ('./base/errors');
 
 //  ---------------------------------------------------------------------------
 
@@ -18,8 +18,10 @@ module.exports = class cex extends Exchange {
                 'CORS': true,
                 'fetchTickers': true,
                 'fetchOHLCV': true,
+                'fetchOrder': true,
                 'fetchOpenOrders': true,
-                'fetchOrders': true,
+                'fetchClosedOrders': true,
+                'fetchDepositAddress': true,
             },
             'timeframes': {
                 '1m': '1m',
@@ -33,6 +35,7 @@ module.exports = class cex extends Exchange {
                     'https://cex.io/fee-schedule',
                     'https://cex.io/limits-commissions',
                 ],
+                'referral': 'https://cex.io/r/0/up105393824/0/',
             },
             'requiredCredentials': {
                 'apiKey': true,
@@ -112,10 +115,14 @@ module.exports = class cex extends Exchange {
                     },
                 },
             },
+            'options': {
+                'fetchOHLCVWarning': true,
+                'createMarketBuyOrderRequiresPrice': true,
+            },
         });
     }
 
-    async fetchMarkets () {
+    async fetchMarkets (params = {}) {
         let markets = await this.publicGetCurrencyLimits ();
         let result = [];
         for (let p = 0; p < markets['data']['pairs'].length; p++) {
@@ -129,10 +136,9 @@ module.exports = class cex extends Exchange {
                 'symbol': symbol,
                 'base': base,
                 'quote': quote,
-                'lot': market['minLotSize'],
                 'precision': {
-                    'price': this.precisionFromString (market['minPrice']),
-                    'amount': -1 * Math.log10 (market['minLotSize']),
+                    'price': this.precisionFromString (this.safeString (market, 'minPrice')),
+                    'amount': this.precisionFromString (this.safeString (market, 'minLotSize')),
                 },
                 'limits': {
                     'amount': {
@@ -140,8 +146,8 @@ module.exports = class cex extends Exchange {
                         'max': market['maxLotSize'],
                     },
                     'price': {
-                        'min': parseFloat (market['minPrice']),
-                        'max': parseFloat (market['maxPrice']),
+                        'min': this.safeFloat (market, 'minPrice'),
+                        'max': this.safeFloat (market, 'maxPrice'),
                     },
                     'cost': {
                         'min': market['minLotSizeS2'],
@@ -177,9 +183,13 @@ module.exports = class cex extends Exchange {
 
     async fetchOrderBook (symbol, limit = undefined, params = {}) {
         await this.loadMarkets ();
-        let orderbook = await this.publicGetOrderBookPair (this.extend ({
+        let request = {
             'pair': this.marketId (symbol),
-        }, params));
+        };
+        if (limit !== undefined) {
+            request['depth'] = limit;
+        }
+        let orderbook = await this.publicGetOrderBookPair (this.extend (request, params));
         let timestamp = orderbook['timestamp'] * 1000;
         return this.parseOrderBook (orderbook, timestamp);
     }
@@ -198,8 +208,13 @@ module.exports = class cex extends Exchange {
     async fetchOHLCV (symbol, timeframe = '1m', since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         let market = this.market (symbol);
-        if (!since)
+        if (since === undefined) {
             since = this.milliseconds () - 86400000; // yesterday
+        } else {
+            if (this.options['fetchOHLCVWarning']) {
+                throw new ExchangeError (this.id + " fetchOHLCV warning: CEX can return historical candles for a certain date only, this might produce an empty or null reply. Set exchange.options['fetchOHLCVWarning'] = false or add ({ 'options': { 'fetchOHLCVWarning': false }}) to constructor params to suppress this warning message.");
+            }
+        }
         let ymd = this.ymd (since);
         ymd = ymd.split ('-');
         ymd = ymd.join ('');
@@ -207,18 +222,22 @@ module.exports = class cex extends Exchange {
             'pair': market['id'],
             'yyyymmdd': ymd,
         };
-        let response = await this.publicGetOhlcvHdYyyymmddPair (this.extend (request, params));
-        let key = 'data' + this.timeframes[timeframe];
-        let ohlcvs = JSON.parse (response[key]);
-        return this.parseOHLCVs (ohlcvs, market, timeframe, since, limit);
+        try {
+            let response = await this.publicGetOhlcvHdYyyymmddPair (this.extend (request, params));
+            let key = 'data' + this.timeframes[timeframe];
+            let ohlcvs = JSON.parse (response[key]);
+            return this.parseOHLCVs (ohlcvs, market, timeframe, since, limit);
+        } catch (e) {
+            if (e instanceof NullResponse) {
+                return [];
+            }
+        }
     }
 
     parseTicker (ticker, market = undefined) {
         let timestamp = undefined;
-        let iso8601 = undefined;
         if ('timestamp' in ticker) {
             timestamp = parseInt (ticker['timestamp']) * 1000;
-            iso8601 = this.iso8601 (timestamp);
         }
         let volume = this.safeFloat (ticker, 'volume');
         let high = this.safeFloat (ticker, 'high');
@@ -232,16 +251,18 @@ module.exports = class cex extends Exchange {
         return {
             'symbol': symbol,
             'timestamp': timestamp,
-            'datetime': iso8601,
+            'datetime': this.iso8601 (timestamp),
             'high': high,
             'low': low,
             'bid': bid,
+            'bidVolume': undefined,
             'ask': ask,
+            'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
-            'close': undefined,
-            'first': undefined,
+            'close': last,
             'last': last,
+            'previousClose': undefined,
             'change': undefined,
             'percentage': undefined,
             'average': undefined,
@@ -287,8 +308,8 @@ module.exports = class cex extends Exchange {
             'symbol': market['symbol'],
             'type': undefined,
             'side': trade['type'],
-            'price': parseFloat (trade['price']),
-            'amount': parseFloat (trade['amount']),
+            'price': this.safeFloat (trade, 'price'),
+            'amount': this.safeFloat (trade, 'amount'),
         };
     }
 
@@ -302,25 +323,30 @@ module.exports = class cex extends Exchange {
     }
 
     async createOrder (symbol, type, side, amount, price = undefined, params = {}) {
+        if (type === 'market') {
+            // for market buy it requires the amount of quote currency to spend
+            if (side === 'buy') {
+                if (this.options['createMarketBuyOrderRequiresPrice']) {
+                    if (price === undefined) {
+                        throw new InvalidOrder (this.id + " createOrder() requires the price argument with market buy orders to calculate total order cost (amount to spend), where cost = amount * price. Supply a price argument to createOrder() call if you want the cost to be calculated for you from price and amount, or, alternatively, add .options['createMarketBuyOrderRequiresPrice'] = false to supply the cost in the amount argument (the exchange-specific behaviour)");
+                    } else {
+                        amount = amount * price;
+                    }
+                }
+            }
+        }
         await this.loadMarkets ();
-        let order = {
+        let request = {
             'pair': this.marketId (symbol),
             'type': side,
             'amount': amount,
         };
         if (type === 'limit') {
-            order['price'] = price;
+            request['price'] = price;
         } else {
-            // for market buy CEX.io requires the amount of quote currency to spend
-            if (side === 'buy') {
-                if (!price) {
-                    throw new InvalidOrder ('For market buy orders ' + this.id + " requires the amount of quote currency to spend, to calculate proper costs call createOrder (symbol, 'market', 'buy', amount, price)");
-                }
-                order['amount'] = amount * price;
-            }
-            order['order_type'] = type;
+            request['order_type'] = type;
         }
-        let response = await this.privatePostPlaceOrderPair (this.extend (order, params));
+        let response = await this.privatePostPlaceOrderPair (this.extend (request, params));
         return {
             'info': response,
             'id': response['id'],
@@ -333,9 +359,18 @@ module.exports = class cex extends Exchange {
     }
 
     parseOrder (order, market = undefined) {
-        let timestamp = parseInt (order['time']);
+        // Depending on the call, 'time' can be a unix int, unix string or ISO string
+        // Yes, really
+        let timestamp = order['time'];
+        if (typeof order['time'] === 'string' && order['time'].indexOf ('T') >= 0) {
+            // ISO8601 string
+            timestamp = this.parse8601 (timestamp);
+        } else {
+            // either integer or string integer
+            timestamp = parseInt (timestamp);
+        }
         let symbol = undefined;
-        if (!market) {
+        if (market === undefined) {
             let symbol = order['symbol1'] + '/' + order['symbol2'];
             if (symbol in this.markets)
                 market = this.market (symbol);
@@ -358,10 +393,10 @@ module.exports = class cex extends Exchange {
         let filled = amount - remaining;
         let fee = undefined;
         let cost = undefined;
-        if (market) {
+        if (market !== undefined) {
             symbol = market['symbol'];
             cost = this.safeFloat (order, 'ta:' + market['quote']);
-            if (typeof cost === 'undefined')
+            if (cost === undefined)
                 cost = this.safeFloat (order, 'tta:' + market['quote']);
             let baseFee = 'fa:' + market['base'];
             let baseTakerFee = 'tfa:' + market['base'];
@@ -374,7 +409,7 @@ module.exports = class cex extends Exchange {
                 feeRate /= 100.0; // convert to mathematically-correct percentage coefficients: 1.0 = 100%
             if ((baseFee in order) || (baseTakerFee in order)) {
                 let baseFeeCost = this.safeFloat (order, baseFee);
-                if (typeof baseFeeCost === 'undefined')
+                if (baseFeeCost === undefined)
                     baseFeeCost = this.safeFloat (order, baseTakerFee);
                 fee = {
                     'currency': market['base'],
@@ -383,7 +418,7 @@ module.exports = class cex extends Exchange {
                 };
             } else if ((quoteFee in order) || (quoteTakerFee in order)) {
                 let quoteFeeCost = this.safeFloat (order, quoteFee);
-                if (typeof quoteFeeCost === 'undefined')
+                if (quoteFeeCost === undefined)
                     quoteFeeCost = this.safeFloat (order, quoteTakerFee);
                 fee = {
                     'currency': market['quote'],
@@ -398,6 +433,7 @@ module.exports = class cex extends Exchange {
             'id': order['id'],
             'datetime': this.iso8601 (timestamp),
             'timestamp': timestamp,
+            'lastTradeTimestamp': undefined,
             'status': status,
             'symbol': symbol,
             'type': undefined,
@@ -418,7 +454,7 @@ module.exports = class cex extends Exchange {
         let request = {};
         let method = 'privatePostOpenOrders';
         let market = undefined;
-        if (symbol) {
+        if (symbol !== undefined) {
             market = this.market (symbol);
             request['pair'] = market['id'];
             method += 'Pair';
@@ -428,6 +464,18 @@ module.exports = class cex extends Exchange {
             orders[i] = this.extend (orders[i], { 'status': 'open' });
         }
         return this.parseOrders (orders, market, since, limit);
+    }
+
+    async fetchClosedOrders (symbol = undefined, since = undefined, limit = undefined, params = {}) {
+        await this.loadMarkets ();
+        let method = 'privatePostArchivedOrdersPair';
+        if (symbol === undefined) {
+            throw new ArgumentsRequired (this.id + ' fetchClosedOrders requires a symbol argument');
+        }
+        let market = this.market (symbol);
+        let request = { 'pair': market['id'] };
+        let response = await this[method] (this.extend (request, params));
+        return this.parseOrders (response, market, since, limit);
     }
 
     async fetchOrder (id, symbol = undefined, params = {}) {
@@ -468,7 +516,7 @@ module.exports = class cex extends Exchange {
     async request (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
         let response = await this.fetch2 (path, api, method, params, headers, body);
         if (!response) {
-            throw new ExchangeError (this.id + ' returned ' + this.json (response));
+            throw new NullResponse (this.id + ' returned ' + this.json (response));
         } else if (response === true) {
             return response;
         } else if ('e' in response) {
@@ -481,5 +529,26 @@ module.exports = class cex extends Exchange {
                 throw new ExchangeError (this.id + ' ' + this.json (response));
         }
         return response;
+    }
+
+    async fetchDepositAddress (code, params = {}) {
+        if (code === 'XRP' || code === 'XLM') {
+            // https://github.com/ccxt/ccxt/pull/2327#issuecomment-375204856
+            throw new NotSupported (this.id + ' fetchDepositAddress does not support XRP and XLM addresses yet (awaiting docs from CEX.io)');
+        }
+        await this.loadMarkets ();
+        let currency = this.currency (code);
+        let request = {
+            'currency': currency['id'],
+        };
+        let response = await this.privatePostGetAddress (this.extend (request, params));
+        let address = this.safeString (response, 'data');
+        this.checkAddress (address);
+        return {
+            'currency': code,
+            'address': address,
+            'tag': undefined,
+            'info': response,
+        };
     }
 };

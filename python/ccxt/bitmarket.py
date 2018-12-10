@@ -46,6 +46,7 @@ class bitmarket (Exchange):
                     'https://www.bitmarket.net/docs.php?file=api_private.html',
                     'https://github.com/bitmarket-net/api',
                 ],
+                'referral': 'https://www.bitmarket.net/?ref=23323',
             },
             'api': {
                 'public': {
@@ -200,35 +201,34 @@ class bitmarket (Exchange):
         orderbook = self.publicGetJsonMarketOrderbook(self.extend({
             'market': self.market_id(symbol),
         }, params))
-        timestamp = self.milliseconds()
-        return {
-            'bids': orderbook['bids'],
-            'asks': orderbook['asks'],
-            'timestamp': timestamp,
-            'datetime': self.iso8601(timestamp),
-        }
+        return self.parse_order_book(orderbook)
 
     def fetch_ticker(self, symbol, params={}):
         ticker = self.publicGetJsonMarketTicker(self.extend({
             'market': self.market_id(symbol),
         }, params))
         timestamp = self.milliseconds()
-        vwap = float(ticker['vwap'])
-        baseVolume = float(ticker['volume'])
-        quoteVolume = baseVolume * vwap
+        vwap = self.safe_float(ticker, 'vwap')
+        baseVolume = self.safe_float(ticker, 'volume')
+        quoteVolume = None
+        if baseVolume is not None and vwap is not None:
+            quoteVolume = baseVolume * vwap
+        last = self.safe_float(ticker, 'last')
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
-            'high': float(ticker['high']),
-            'low': float(ticker['low']),
-            'bid': float(ticker['bid']),
-            'ask': float(ticker['ask']),
+            'high': self.safe_float(ticker, 'high'),
+            'low': self.safe_float(ticker, 'low'),
+            'bid': self.safe_float(ticker, 'bid'),
+            'bidVolume': None,
+            'ask': self.safe_float(ticker, 'ask'),
+            'askVolume': None,
             'vwap': vwap,
             'open': None,
-            'close': None,
-            'first': None,
-            'last': float(ticker['last']),
+            'close': last,
+            'last': last,
+            'previousClose': None,
             'change': None,
             'percentage': None,
             'average': None,
@@ -289,7 +289,7 @@ class bitmarket (Exchange):
         result = {
             'info': response,
         }
-        if 'id' in response['order']:
+        if 'id' in response['data']:
             result['id'] = response['id']
         return result
 
@@ -303,14 +303,16 @@ class bitmarket (Exchange):
             return True
         return False
 
-    def withdraw(self, currency, amount, address, tag=None, params={}):
+    def withdraw(self, code, amount, address, tag=None, params={}):
+        self.check_address(address)
         self.load_markets()
+        currency = self.currency(code)
         method = None
         request = {
-            'currency': currency,
+            'currency': currency['id'],
             'quantity': amount,
         }
-        if self.is_fiat(currency):
+        if self.is_fiat(code):
             method = 'privatePostWithdrawFiat'
             if 'account' in params:
                 request['account'] = params['account']  # bank account code for withdrawal

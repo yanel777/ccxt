@@ -22,6 +22,9 @@ class bitlish (Exchange):
                 'fetchOHLCV': True,
                 'withdraw': True,
             },
+            'timeframes': {
+                '1h': 3600,
+            },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/27766275-dcfc6c30-5ed3-11e7-839d-00a846385d0b.jpg',
                 'api': 'https://bitlish.com/api',
@@ -113,24 +116,13 @@ class bitlish (Exchange):
                     ],
                 },
             },
+            'commonCurrencies': {
+                'DSH': 'DASH',
+                'XDG': 'DOGE',
+            },
         })
 
-    def common_currency_code(self, currency):
-        if not self.substituteCommonCurrencyCodes:
-            return currency
-        if currency == 'XBT':
-            return 'BTC'
-        if currency == 'BCC':
-            return 'BCH'
-        if currency == 'DRK':
-            return 'DASH'
-        if currency == 'DSH':
-            currency = 'DASH'
-        if currency == 'XDG':
-            currency = 'DOGE'
-        return currency
-
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         markets = self.publicGetPairs()
         result = []
         keys = list(markets.keys())
@@ -156,21 +148,24 @@ class bitlish (Exchange):
         symbol = None
         if market:
             symbol = market['symbol']
+        last = self.safe_float(ticker, 'last')
         return {
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
             'symbol': symbol,
             'high': self.safe_float(ticker, 'max'),
             'low': self.safe_float(ticker, 'min'),
-            'bid': None,
-            'ask': None,
+            'bid': self.safe_float(ticker, 'bid'),
+            'bidVolume': None,
+            'ask': self.safe_float(ticker, 'ask'),
+            'askVolume': None,
             'vwap': None,
-            'open': None,
-            'close': None,
-            'first': self.safe_float(ticker, 'first'),
-            'last': self.safe_float(ticker, 'last'),
+            'open': self.safe_float(ticker, 'first'),
+            'close': last,
+            'last': last,
+            'previousClose': None,
             'change': None,
-            'percentage': self.safe_float(ticker, 'prc'),
+            'percentage': self.safe_float(ticker, 'prc') * 100,
             'average': None,
             'baseVolume': self.safe_float(ticker, 'sum'),
             'quoteVolume': None,
@@ -184,8 +179,18 @@ class bitlish (Exchange):
         result = {}
         for i in range(0, len(ids)):
             id = ids[i]
-            market = self.markets_by_id[id]
-            symbol = market['symbol']
+            market = self.safe_value(self.markets_by_id, id)
+            symbol = None
+            if market is not None:
+                symbol = market['symbol']
+            else:
+                baseId = id[0:3]
+                quoteId = id[3:6]
+                base = baseId.upper()
+                quote = quoteId.upper()
+                base = self.common_currency_code(base)
+                quote = self.common_currency_code(quote)
+                symbol = base + '/' + quote
             ticker = tickers[id]
             result[symbol] = self.parse_ticker(ticker, market)
         return result
@@ -197,11 +202,13 @@ class bitlish (Exchange):
         ticker = tickers[market['id']]
         return self.parse_ticker(ticker, market)
 
-    def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=None, params={}):
+    def fetch_ohlcv(self, symbol, timeframe='1h', since=None, limit=None, params={}):
         self.load_markets()
         # market = self.market(symbol)
         now = self.seconds()
         start = now - 86400 * 30  # last 30 days
+        if since is not None:
+            start = int(since / 1000)
         interval = [str(start), None]
         return self.publicPostOhlcv(self.extend({
             'time_range': interval,
@@ -297,9 +304,11 @@ class bitlish (Exchange):
         self.load_markets()
         return self.privatePostCancelTrade({'id': id})
 
-    def withdraw(self, currency, amount, address, tag=None, params={}):
+    def withdraw(self, code, amount, address, tag=None, params={}):
+        self.check_address(address)
         self.load_markets()
-        if currency != 'BTC':
+        currency = self.currency(code)
+        if code != 'BTC':
             # they did not document other types...
             raise NotSupported(self.id + ' currently supports BTC withdrawals only, until they document other currencies...')
         response = self.privatePostWithdraw(self.extend({

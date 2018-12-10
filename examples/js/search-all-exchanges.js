@@ -3,14 +3,17 @@
 /*  ------------------------------------------------------------------------ */
 
 const [processPath, , argument = null] = process.argv.filter (x => !x.startsWith ('--'))
-const verbose = process.argv.includes ('--verbose') || false
-const strict  = process.argv.includes ('--strict')  || false
+    , verbose = process.argv.includes ('--verbose') || false
+    , strict  = process.argv.includes ('--strict')  || false
+    , compact = process.argv.includes ('--compact') || false
 
 
 /*  ------------------------------------------------------------------------ */
 
 const asTable   = require ('as-table')
     , log       = require ('ololog')
+    , path      = require ('path')
+    , fs        = require ('fs')
     , ansi      = require ('ansicolor').nice
     , ccxt      = require ('../../ccxt.js')
 
@@ -38,18 +41,35 @@ if (process.argv.length < 3) {
 
 /*  ------------------------------------------------------------------------ */
 
+const keysGlobal = path.resolve ('keys.json')
+const keysLocal = path.resolve ('keys.local.json')
+let globalKeysFile = fs.existsSync (keysGlobal) ? keysGlobal : false
+let localKeysFile = fs.existsSync (keysLocal) ? keysLocal : globalKeysFile
+
+const keys = require (localKeysFile)
+
+/*  ------------------------------------------------------------------------ */
+
 log ('\nLooking up for:', argument.bright, strict ? '(strict search)' : '(non-strict search)', '\n')
 
 const checkAgainst = strict ?
     (a, b) => ((a == b.toLowerCase ()) || (a == b.toUpperCase ())) :
-    (a, b) => (a.includes (b.toLowerCase ()) || a.includes (b.toUpperCase ()))
+    (a, b) => a.toLowerCase ().includes (b.toLowerCase ())
 
 ;(async function test () {
 
+    const { Agent } = require ('https')
+
     let exchanges = await Promise.all (ccxt.exchanges.map (async id => {
 
+        const agent = new Agent ({
+            ecdhCurve: 'auto',
+        })
+
         // instantiate the exchange
-        let exchange = new ccxt[id] ()
+        let exchange = new ccxt[id] (ccxt.extend (localKeysFile ? (keys[id] || {}) : {}, {
+            agent, // set up keys and settings, if any
+        }))
 
         if (exchange.has.publicAPI) {
 
@@ -81,11 +101,21 @@ const checkAgainst = strict ?
                     exchange: exchange.id[(market.active !== false) ? 'green' : 'yellow'],
                 }))))
         .filter (market =>
+            checkAgainst (market['base'],  argument) ||
+            checkAgainst (market['quote'], argument) ||
+            (market['baseId']  ? checkAgainst (market['baseId'],  argument) : false) ||
+            (market['quoteId'] ? checkAgainst (market['quoteId'], argument) : false) ||
             checkAgainst (market['symbol'], argument) ||
             checkAgainst (market['id'].toString (), argument))
 
 
-    log (asTable (markets.map (market => ccxt.omit (market, [ 'info', 'limits', 'precision', 'tiers' ]))))
+    log (asTable (markets.map (market => {
+        market = ccxt.omit (market, [ 'info', 'limits', 'precision', 'tiers' ])
+        return (!compact) ? market : {
+            'symbol': market['symbol'],
+            'exchange': market['exchange'],
+        };
+    })))
 
     log ("\n---------------------------------------------------------------\n")
 

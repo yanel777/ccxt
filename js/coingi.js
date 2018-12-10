@@ -89,7 +89,7 @@ module.exports = class coingi extends Exchange {
         });
     }
 
-    async fetchMarkets () {
+    async fetchMarkets (params = {}) {
         let response = undefined;
         try {
             this.parseJsonResponse = false;
@@ -114,19 +114,17 @@ module.exports = class coingi extends Exchange {
                 'amount': 8,
                 'price': 8,
             };
-            let lot = Math.pow (10, -precision['amount']);
             result.push ({
                 'id': id,
                 'symbol': symbol,
                 'base': base,
                 'quote': quote,
                 'info': id,
-                'lot': lot,
                 'active': true,
                 'precision': precision,
                 'limits': {
                     'amount': {
-                        'min': lot,
+                        'min': Math.pow (10, -precision['amount']),
                         'max': Math.pow (10, precision['amount']),
                     },
                     'price': {
@@ -194,12 +192,14 @@ module.exports = class coingi extends Exchange {
             'high': ticker['high'],
             'low': ticker['low'],
             'bid': ticker['highestBid'],
+            'bidVolume': undefined,
             'ask': ticker['lowestAsk'],
+            'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
             'close': undefined,
-            'first': undefined,
             'last': undefined,
+            'previousClose': undefined,
             'change': undefined,
             'percentage': undefined,
             'average': undefined,

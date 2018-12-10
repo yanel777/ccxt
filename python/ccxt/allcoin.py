@@ -12,7 +12,7 @@ class allcoin (okcoinusd):
         return self.deep_extend(super(allcoin, self).describe(), {
             'id': 'allcoin',
             'name': 'Allcoin',
-            'countries': 'CA',
+            'countries': ['CA'],
             'has': {
                 'CORS': False,
             },
@@ -25,7 +25,7 @@ class allcoin (okcoinusd):
                     'private': 'https://api.allcoin.com/api',
                 },
                 'www': 'https://www.allcoin.com',
-                'doc': 'https://www.allcoin.com/About/APIReference',
+                'doc': 'https://www.allcoin.com/api_market/market',
             },
             'api': {
                 'web': {
@@ -55,10 +55,9 @@ class allcoin (okcoinusd):
                     ],
                 },
             },
-            'markets': None,
         })
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         result = []
         response = self.webGetHomeMarketOverViewDetail()
         coins = response['marketCoins']
@@ -68,32 +67,55 @@ class allcoin (okcoinusd):
                 market = markets[k]['Market']
                 base = market['Primary']
                 quote = market['Secondary']
-                id = base.lower() + '_' + quote.lower()
+                baseId = base.lower()
+                quoteId = quote.lower()
+                id = baseId + '_' + quoteId
                 symbol = base + '/' + quote
+                active = market['TradeEnabled'] and market['BuyEnabled'] and market['SellEnabled']
                 result.append({
                     'id': id,
                     'symbol': symbol,
                     'base': base,
                     'quote': quote,
+                    'baseId': baseId,
+                    'quoteId': quoteId,
+                    'active': active,
                     'type': 'spot',
                     'spot': True,
                     'future': False,
+                    'maker': market['AskFeeRate'],  # BidFeeRate 0, AskFeeRate 0.002, we use just the AskFeeRate here
+                    'taker': market['AskFeeRate'],  # BidFeeRate 0, AskFeeRate 0.002, we use just the AskFeeRate here
+                    'precision': {
+                        'amount': market['PrimaryDigits'],
+                        'price': market['SecondaryDigits'],
+                    },
+                    'limits': {
+                        'amount': {
+                            'min': market['MinTradeAmount'],
+                            'max': market['MaxTradeAmount'],
+                        },
+                        'price': {
+                            'min': market['MinOrderPrice'],
+                            'max': market['MaxOrderPrice'],
+                        },
+                        'cost': {
+                            'min': None,
+                            'max': None,
+                        },
+                    },
                     'info': market,
                 })
         return result
 
     def parse_order_status(self, status):
-        if status == -1:
-            return 'canceled'
-        if status == 0:
-            return 'open'
-        if status == 1:
-            return 'open'  # partially filled
-        if status == 2:
-            return 'closed'
-        if status == 10:
-            return 'canceled'
-        return status
+        statuses = {
+            '-1': 'canceled',
+            '0': 'open',
+            '1': 'open',
+            '2': 'closed',
+            '10': 'canceled',
+        }
+        return self.safe_string(statuses, status, status)
 
     def get_create_date_field(self):
         # allcoin typo create_data instead of create_date

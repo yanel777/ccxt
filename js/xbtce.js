@@ -12,14 +12,12 @@ module.exports = class xbtce extends Exchange {
         return this.deepExtend (super.describe (), {
             'id': 'xbtce',
             'name': 'xBTCe',
-            'countries': 'RU',
+            'countries': [ 'RU' ],
             'rateLimit': 2000, // responses are cached every 2 seconds
             'version': 'v1',
             'has': {
-                'publicAPI': false,
                 'CORS': false,
                 'fetchTickers': true,
-                'fetchOHLCV': false,
                 'createMarketOrder': false,
             },
             'urls': {
@@ -106,7 +104,7 @@ module.exports = class xbtce extends Exchange {
         });
     }
 
-    async fetchMarkets () {
+    async fetchMarkets (params = {}) {
         let markets = await this.privateGetSymbol ();
         let result = [];
         for (let p = 0; p < markets.length; p++) {
@@ -186,12 +184,14 @@ module.exports = class xbtce extends Exchange {
             'high': ticker['DailyBestBuyPrice'],
             'low': ticker['DailyBestSellPrice'],
             'bid': ticker['BestBid'],
+            'bidVolume': undefined,
             'ask': ticker['BestAsk'],
+            'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
-            'close': undefined,
-            'first': undefined,
+            'close': last,
             'last': last,
+            'previousClose': undefined,
             'change': undefined,
             'percentage': undefined,
             'average': undefined,
@@ -265,9 +265,9 @@ module.exports = class xbtce extends Exchange {
         //     let periodicity = minutes.toString ();
         //     await this.loadMarkets ();
         //     let market = this.market (symbol);
-        //     if (!since)
+        //     if (since === undefined)
         //         since = this.seconds () - 86400 * 7; // last day by defulat
-        //     if (!limit)
+        //     if (limit === undefined)
         //         limit = 1000; // default
         //     let response = await this.privateGetQuotehistorySymbolPeriodicityBarsBid (this.extend ({
         //         'symbol': market['id'],
@@ -283,7 +283,7 @@ module.exports = class xbtce extends Exchange {
         await this.loadMarkets ();
         if (type === 'market')
             throw new ExchangeError (this.id + ' allows limit orders only');
-        let response = await this.tapiPostTrade (this.extend ({
+        let response = await this.privatePostTrade (this.extend ({
             'pair': this.marketId (symbol),
             'type': side,
             'amount': amount,

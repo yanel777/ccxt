@@ -12,7 +12,7 @@ module.exports = class _1btcxe extends Exchange {
         return this.deepExtend (super.describe (), {
             'id': '_1btcxe',
             'name': '1BTCXE',
-            'countries': 'PA', // Panama
+            'countries': [ 'PA' ], // Panama
             'comment': 'Crypto Capital API',
             'has': {
                 'CORS': true,
@@ -56,7 +56,7 @@ module.exports = class _1btcxe extends Exchange {
         });
     }
 
-    async fetchMarkets () {
+    async fetchMarkets (params = {}) {
         return [
             { 'id': 'USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD' },
             { 'id': 'EUR', 'symbol': 'BTC/EUR', 'base': 'BTC', 'quote': 'EUR' },
@@ -118,25 +118,28 @@ module.exports = class _1btcxe extends Exchange {
             'currency': this.marketId (symbol),
         }, params));
         let ticker = response['stats'];
-        let timestamp = this.milliseconds ();
+        let last = this.safeFloat (ticker, 'last_price');
         return {
             'symbol': symbol,
-            'timestamp': timestamp,
-            'datetime': this.iso8601 (timestamp),
-            'high': parseFloat (ticker['max']),
-            'low': parseFloat (ticker['min']),
-            'bid': parseFloat (ticker['bid']),
-            'ask': parseFloat (ticker['ask']),
+            'timestamp': undefined,
+            'datetime': undefined,
+            'high': this.safeFloat (ticker, 'max'),
+            'low': this.safeFloat (ticker, 'min'),
+            'bid': this.safeFloat (ticker, 'bid'),
+            'bidVolume': undefined,
+            'ask': this.safeFloat (ticker, 'ask'),
+            'askVolume': undefined,
             'vwap': undefined,
-            'open': parseFloat (ticker['open']),
-            'close': undefined,
-            'first': undefined,
-            'last': parseFloat (ticker['last_price']),
-            'change': parseFloat (ticker['daily_change']),
+            'open': this.safeFloat (ticker, 'open'),
+            'close': last,
+            'last': last,
+            'previousClose': undefined,
+            'change': this.safeFloat (ticker, 'daily_change'),
             'percentage': undefined,
             'average': undefined,
             'baseVolume': undefined,
-            'quoteVolume': parseFloat (ticker['total_btc_traded']),
+            'quoteVolume': this.safeFloat (ticker, 'total_btc_traded'),
+            'info': ticker,
         };
     }
 
@@ -157,7 +160,7 @@ module.exports = class _1btcxe extends Exchange {
             'currency': market['id'],
             'timeframe': this.timeframes[timeframe],
         }, params));
-        let ohlcvs = this.omit (response['historical-prices'], 'request_currency');
+        let ohlcvs = this.toArray (this.omit (response['historical-prices'], 'request_currency'));
         return this.parseOHLCVs (ohlcvs, market, timeframe, since, limit);
     }
 
@@ -172,8 +175,8 @@ module.exports = class _1btcxe extends Exchange {
             'order': undefined,
             'type': undefined,
             'side': trade['maker_type'],
-            'price': parseFloat (trade['price']),
-            'amount': parseFloat (trade['amount']),
+            'price': this.safeFloat (trade, 'price'),
+            'amount': this.safeFloat (trade, 'amount'),
         };
     }
 
@@ -182,7 +185,7 @@ module.exports = class _1btcxe extends Exchange {
         let response = await this.publicGetTransactions (this.extend ({
             'currency': market['id'],
         }, params));
-        let trades = this.omit (response['transactions'], 'request_currency');
+        let trades = this.toArray (this.omit (response['transactions'], 'request_currency'));
         return this.parseTrades (trades, market, since, limit);
     }
 
@@ -206,13 +209,16 @@ module.exports = class _1btcxe extends Exchange {
         return await this.privatePostOrdersCancel ({ 'id': id });
     }
 
-    async withdraw (currency, amount, address, tag = undefined, params = {}) {
+    async withdraw (code, amount, address, tag = undefined, params = {}) {
+        this.checkAddress (address);
         await this.loadMarkets ();
-        let response = await this.privatePostWithdrawalsNew (this.extend ({
-            'currency': currency,
+        let currency = this.currency (code);
+        const request = {
+            'currency': currency['id'],
             'amount': parseFloat (amount),
             'address': address,
-        }, params));
+        };
+        let response = await this.privatePostWithdrawalsNew (this.extend (request, params));
         return {
             'info': response,
             'id': response['result']['uuid'],

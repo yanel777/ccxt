@@ -14,14 +14,19 @@ module.exports = class coinmarketcap extends Exchange {
             'name': 'CoinMarketCap',
             'rateLimit': 10000,
             'version': 'v1',
-            'countries': 'US',
+            'countries': [ 'US' ],
             'has': {
                 'CORS': true,
                 'privateAPI': false,
                 'createOrder': false,
+                'createMarketOrder': false,
+                'createLimitOrder': false,
                 'cancelOrder': false,
+                'editOrder': false,
                 'fetchBalance': false,
                 'fetchOrderBook': false,
+                'fetchL2OrderBook': false,
+                'fetchOHLCV': false,
                 'fetchTrades': false,
                 'fetchTickers': true,
                 'fetchCurrencies': true,
@@ -75,6 +80,9 @@ module.exports = class coinmarketcap extends Exchange {
                 'MXN',
                 'RUB',
                 'USD',
+                'BTC',
+                'ETH',
+                'LTC',
             ],
         });
     }
@@ -85,22 +93,49 @@ module.exports = class coinmarketcap extends Exchange {
 
     currencyCode (base, name) {
         const currencies = {
+            'ACChain': 'ACChain',
+            'AdCoin': 'AdCoin',
             'BatCoin': 'BatCoin',
             'Bitgem': 'Bitgem',
+            'BlazeCoin': 'BlazeCoin',
             'BlockCAT': 'BlockCAT',
             'Catcoin': 'Catcoin',
+            'CanYaCoin': 'CanYaCoin', // conflict with CAN (Content and AD Network)
+            'Comet': 'Comet', // conflict with CMT (CyberMiles)
+            'CPChain': 'CPChain',
+            'CrowdCoin': 'CrowdCoin', // conflict with CRC CryCash
+            'Cubits': 'Cubits', // conflict with QBT (Qbao)
+            'DAO.Casino': 'DAO.Casino', // conflict with BET (BetaCoin)
+            'E-Dinar Coin': 'E-Dinar Coin', // conflict with EDR Endor Protocol and EDRCoin
+            'EDRcoin': 'EDRcoin', // conflict with EDR Endor Protocol and E-Dinar Coin
+            'ENTCash': 'ENTCash', // conflict with ENT (Eternity)
+            'FairGame': 'FairGame',
+            'Fabric Token': 'Fabric Token',
+            'GET Protocol': 'GET Protocol',
+            'Global Tour Coin': 'Global Tour Coin', // conflict with GTC (Game.com)
+            'GuccioneCoin': 'GuccioneCoin', // conflict with GCC (Global Cryptocurrency)
+            'HarmonyCoin': 'HarmonyCoin', // conflict with HMC (Hi Mutual Society)
+            'Harvest Masternode Coin': 'Harvest Masternode Coin', // conflict with HC (HyperCash)
+            'Hydro Protocol': 'Hydro Protocol', // conflict with HOT (Holo)
+            'Huncoin': 'Huncoin', // conflict with HNC (Helleniccoin)
             'iCoin': 'iCoin',
+            'Infinity Economics': 'Infinity Economics', // conflict with XIN (Mixin)
+            'KingN Coin': 'KingN Coin', // conflict with KNC (Kyber Network)
+            'LiteBitcoin': 'LiteBitcoin', // conflict with LBTC (LightningBitcoin)
+            'Maggie': 'Maggie',
+            'IOTA': 'IOTA', // a special case, most exchanges list it as IOTA, therefore we change just the Coinmarketcap instead of changing them all
             'NetCoin': 'NetCoin',
-            // a special case, most exchanges list it as IOTA, therefore
-            // we change just the Coinmarketcap instead of changing them all
-            'MIOTA': 'IOTA',
+            'PCHAIN': 'PCHAIN', // conflict with PAI (Project Pai)
+            'Polcoin': 'Polcoin',
+            'PutinCoin': 'PutinCoin', // conflict with PUT (Profile Utility Token)
+            'Rcoin': 'Rcoin', // conflict with RCN (Ripio Credit Network)
         };
         if (name in currencies)
             return currencies[name];
         return base;
     }
 
-    async fetchMarkets () {
+    async fetchMarkets (params = {}) {
         let markets = await this.publicGetTicker ({
             'limit': 0,
         });
@@ -114,7 +149,7 @@ module.exports = class coinmarketcap extends Exchange {
                 let baseId = market['id'];
                 let base = this.currencyCode (market['symbol'], market['name']);
                 let symbol = base + '/' + quote;
-                let id = baseId + '/' + quote;
+                let id = baseId + '/' + quoteId;
                 result.push ({
                     'id': id,
                     'symbol': symbol,
@@ -149,7 +184,7 @@ module.exports = class coinmarketcap extends Exchange {
         let last = undefined;
         let symbol = undefined;
         let volume = undefined;
-        if (market) {
+        if (market !== undefined) {
             let priceKey = 'price_' + market['quoteId'];
             if (priceKey in ticker)
                 if (ticker[priceKey])
@@ -167,12 +202,14 @@ module.exports = class coinmarketcap extends Exchange {
             'high': undefined,
             'low': undefined,
             'bid': undefined,
+            'bidVolume': undefined,
             'ask': undefined,
+            'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
-            'close': undefined,
-            'first': undefined,
+            'close': last,
             'last': last,
+            'previousClose': undefined,
             'change': change,
             'percentage': undefined,
             'average': undefined,
@@ -193,7 +230,8 @@ module.exports = class coinmarketcap extends Exchange {
         let tickers = {};
         for (let t = 0; t < response.length; t++) {
             let ticker = response[t];
-            let id = ticker['id'] + '/' + currency;
+            let currencyId = currency.toLowerCase ();
+            let id = ticker['id'] + '/' + currencyId;
             let symbol = id;
             let market = undefined;
             if (id in this.markets_by_id) {
@@ -237,7 +275,6 @@ module.exports = class coinmarketcap extends Exchange {
                 'info': currency,
                 'name': name,
                 'active': true,
-                'status': 'ok',
                 'fee': undefined, // todo: redesign
                 'precision': precision,
                 'limits': {

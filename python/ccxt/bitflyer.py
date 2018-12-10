@@ -5,6 +5,8 @@
 
 from ccxt.base.exchange import Exchange
 from ccxt.base.errors import ExchangeError
+from ccxt.base.errors import ArgumentsRequired
+from ccxt.base.errors import OrderNotFound
 
 
 class bitflyer (Exchange):
@@ -13,12 +15,17 @@ class bitflyer (Exchange):
         return self.deep_extend(super(bitflyer, self).describe(), {
             'id': 'bitflyer',
             'name': 'bitFlyer',
-            'countries': 'JP',
+            'countries': ['JP'],
             'version': 'v1',
-            'rateLimit': 500,
+            'rateLimit': 1000,  # their nonce-timestamp is in seconds...
             'has': {
                 'CORS': False,
                 'withdraw': True,
+                'fetchMyTrades': True,
+                'fetchOrders': True,
+                'fetchOrder': True,
+                'fetchOpenOrders': 'emulated',
+                'fetchClosedOrders': 'emulated',
             },
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/28051642-56154182-660e-11e7-9b0d-6042d1e6edd8.jpg',
@@ -36,6 +43,7 @@ class bitflyer (Exchange):
                         'getticker',
                         'getexecutions',
                         'gethealth',
+                        'getboardstate',
                         'getchats',
                     ],
                 },
@@ -77,7 +85,7 @@ class bitflyer (Exchange):
             },
         })
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         jp_markets = self.publicGetGetmarkets()
         us_markets = self.publicGetGetmarketsUsa()
         eu_markets = self.publicGetGetmarketsEu()
@@ -87,26 +95,41 @@ class bitflyer (Exchange):
         for p in range(0, len(markets)):
             market = markets[p]
             id = market['product_code']
+            spot = True
+            future = False
+            type = 'spot'
+            if 'alias' in market:
+                type = 'future'
+                future = True
+                spot = False
             currencies = id.split('_')
+            baseId = None
+            quoteId = None
             base = None
             quote = None
-            symbol = id
             numCurrencies = len(currencies)
             if numCurrencies == 1:
-                base = symbol[0:3]
-                quote = symbol[3:6]
+                baseId = id[0:3]
+                quoteId = id[3:6]
             elif numCurrencies == 2:
-                base = currencies[0]
-                quote = currencies[1]
-                symbol = base + '/' + quote
+                baseId = currencies[0]
+                quoteId = currencies[1]
             else:
-                base = currencies[1]
-                quote = currencies[2]
+                baseId = currencies[1]
+                quoteId = currencies[2]
+            base = self.common_currency_code(baseId)
+            quote = self.common_currency_code(quoteId)
+            symbol = (base + '/' + quote) if (numCurrencies == 2) else id
             result.append({
                 'id': id,
                 'symbol': symbol,
                 'base': base,
                 'quote': quote,
+                'baseId': baseId,
+                'quoteId': quoteId,
+                'type': type,
+                'spot': spot,
+                'future': future,
                 'info': market,
             })
         return result
@@ -144,23 +167,26 @@ class bitflyer (Exchange):
             'product_code': self.market_id(symbol),
         }, params))
         timestamp = self.parse8601(ticker['timestamp'])
+        last = self.safe_float(ticker, 'ltp')
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
             'high': None,
             'low': None,
-            'bid': float(ticker['best_bid']),
-            'ask': float(ticker['best_ask']),
+            'bid': self.safe_float(ticker, 'best_bid'),
+            'bidVolume': None,
+            'ask': self.safe_float(ticker, 'best_ask'),
+            'askVolume': None,
             'vwap': None,
             'open': None,
-            'close': None,
-            'first': None,
-            'last': float(ticker['ltp']),
+            'close': last,
+            'last': last,
+            'previousClose': None,
             'change': None,
             'percentage': None,
             'average': None,
-            'baseVolume': float(ticker['volume_by_product']),
+            'baseVolume': self.safe_float(ticker, 'volume_by_product'),
             'quoteVolume': None,
             'info': ticker,
         }
@@ -174,7 +200,11 @@ class bitflyer (Exchange):
                 id = side + '_child_order_acceptance_id'
                 if id in trade:
                     order = trade[id]
+        if order is None:
+            order = self.safe_string(trade, 'child_order_acceptance_id')
         timestamp = self.parse8601(trade['exec_date'])
+        price = self.safe_float(trade, 'price')
+        amount = self.safe_float(trade, 'size')
         return {
             'id': str(trade['id']),
             'info': trade,
@@ -184,8 +214,8 @@ class bitflyer (Exchange):
             'order': order,
             'type': None,
             'side': side,
-            'price': trade['price'],
-            'amount': trade['size'],
+            'price': price,
+            'amount': amount,
         }
 
     def fetch_trades(self, symbol, since=None, limit=None, params={}):
@@ -206,6 +236,7 @@ class bitflyer (Exchange):
             'size': amount,
         }
         result = self.privatePostSendchildorder(self.extend(order, params))
+        # {"status": - 200, "error_message": "Insufficient funds", "data": null}
         return {
             'info': result,
             'id': result['child_order_acceptance_id'],
@@ -213,17 +244,126 @@ class bitflyer (Exchange):
 
     def cancel_order(self, id, symbol=None, params={}):
         if symbol is None:
-            raise ExchangeError(self.id + ' cancelOrder() requires a symbol argument')
+            raise ArgumentsRequired(self.id + ' cancelOrder() requires a symbol argument')
         self.load_markets()
         return self.privatePostCancelchildorder(self.extend({
             'product_code': self.market_id(symbol),
             'child_order_acceptance_id': id,
         }, params))
 
-    def withdraw(self, currency, amount, address, tag=None, params={}):
+    def parse_order_status(self, status):
+        statuses = {
+            'ACTIVE': 'open',
+            'COMPLETED': 'closed',
+            'CANCELED': 'canceled',
+            'EXPIRED': 'canceled',
+            'REJECTED': 'canceled',
+        }
+        if status in statuses:
+            return statuses[status]
+        return status
+
+    def parse_order(self, order, market=None):
+        timestamp = self.parse8601(order['child_order_date'])
+        amount = self.safe_float(order, 'size')
+        remaining = self.safe_float(order, 'outstanding_size')
+        filled = self.safe_float(order, 'executed_size')
+        price = self.safe_float(order, 'price')
+        cost = price * filled
+        status = self.parse_order_status(self.safe_string(order, 'child_order_state'))
+        type = order['child_order_type'].lower()
+        side = order['side'].lower()
+        symbol = None
+        if market is None:
+            marketId = self.safe_string(order, 'product_code')
+            if marketId is not None:
+                if marketId in self.markets_by_id:
+                    market = self.markets_by_id[marketId]
+        if market is not None:
+            symbol = market['symbol']
+        fee = None
+        feeCost = self.safe_float(order, 'total_commission')
+        if feeCost is not None:
+            fee = {
+                'cost': feeCost,
+                'currency': None,
+                'rate': None,
+            }
+        return {
+            'id': order['child_order_acceptance_id'],
+            'info': order,
+            'timestamp': timestamp,
+            'datetime': self.iso8601(timestamp),
+            'lastTradeTimestamp': None,
+            'status': status,
+            'symbol': symbol,
+            'type': type,
+            'side': side,
+            'price': price,
+            'cost': cost,
+            'amount': amount,
+            'filled': filled,
+            'remaining': remaining,
+            'fee': fee,
+        }
+
+    def fetch_orders(self, symbol=None, since=None, limit=100, params={}):
+        if symbol is None:
+            raise ArgumentsRequired(self.id + ' fetchOrders() requires a symbol argument')
         self.load_markets()
+        market = self.market(symbol)
+        request = {
+            'product_code': market['id'],
+            'count': limit,
+        }
+        response = self.privateGetGetchildorders(self.extend(request, params))
+        orders = self.parse_orders(response, market, since, limit)
+        if symbol is not None:
+            orders = self.filter_by(orders, 'symbol', symbol)
+        return orders
+
+    def fetch_open_orders(self, symbol=None, since=None, limit=100, params={}):
+        request = {
+            'child_order_state': 'ACTIVE',
+        }
+        return self.fetch_orders(symbol, since, limit, self.extend(request, params))
+
+    def fetch_closed_orders(self, symbol=None, since=None, limit=100, params={}):
+        request = {
+            'child_order_state': 'COMPLETED',
+        }
+        return self.fetch_orders(symbol, since, limit, self.extend(request, params))
+
+    def fetch_order(self, id, symbol=None, params={}):
+        if symbol is None:
+            raise ArgumentsRequired(self.id + ' fetchOrder() requires a symbol argument')
+        orders = self.fetch_orders(symbol)
+        ordersById = self.index_by(orders, 'id')
+        if id in ordersById:
+            return ordersById[id]
+        raise OrderNotFound(self.id + ' No order found with id ' + id)
+
+    def fetch_my_trades(self, symbol=None, since=None, limit=None, params={}):
+        if symbol is None:
+            raise ArgumentsRequired(self.id + ' fetchMyTrades requires a symbol argument')
+        self.load_markets()
+        market = self.market(symbol)
+        request = {
+            'product_code': market['id'],
+        }
+        if limit is not None:
+            request['count'] = limit
+        response = self.privateGetGetexecutions(self.extend(request, params))
+        return self.parse_trades(response, market, since, limit)
+
+    def withdraw(self, code, amount, address, tag=None, params={}):
+        self.check_address(address)
+        self.load_markets()
+        if code != 'JPY' and code != 'USD' and code != 'EUR':
+            raise ExchangeError(self.id + ' allows withdrawing JPY, USD, EUR only, ' + code + ' is not supported')
+        currency = self.currency(code)
         response = self.privatePostWithdraw(self.extend({
-            'currency_code': currency,
+            'currency_code': currency['id'],
             'amount': amount,
             # 'bank_account_id': 1234,
         }, params))
@@ -246,8 +386,9 @@ class bitflyer (Exchange):
             nonce = str(self.nonce())
             auth = ''.join([nonce, method, request])
             if params:
-                body = self.json(params)
-                auth += body
+                if method != 'GET':
+                    body = self.json(params)
+                    auth += body
             headers = {
                 'ACCESS-KEY': self.apiKey,
                 'ACCESS-TIMESTAMP': nonce,

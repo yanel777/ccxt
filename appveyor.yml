@@ -8,10 +8,12 @@ install:
   - set PATH=%APPDATA%\npm;%PATH%
   - npm install
   - pip install tox
+  - pip install requests
   - cinst -y curl
   - SET PATH=C:\Program Files\curl;%PATH%
-  - cinst php --version 7.0.9 --allow-empty-checksums
-  - cd c:\tools\php
+  - ps: Set-Service wuauserv -StartupType Manual
+  - cinst -y php --allow-empty-checksums
+  - cd c:\tools\php73
   - copy php.ini-production php.ini
   - echo date.timezone="UTC" >> php.ini
   - echo extension_dir=ext >> php.ini
@@ -23,7 +25,7 @@ matrix:
 build: off
 shallow_clone: true
 before_test:
-  - cinst pandoc
+  - cinst pandoc --version 2.3.1
   - pandoc -v
 test_script:
   - refreshenv

@@ -4,9 +4,22 @@
 # https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md#how-to-contribute-code
 
 from ccxt.base.exchange import Exchange
+
+# -----------------------------------------------------------------------------
+
+try:
+    basestring  # Python 3
+except NameError:
+    basestring = str  # Python 2
 import base64
 import hashlib
+import json
 from ccxt.base.errors import ExchangeError
+from ccxt.base.errors import AuthenticationError
+from ccxt.base.errors import PermissionDenied
+from ccxt.base.errors import BadRequest
+from ccxt.base.errors import InvalidAddress
+from ccxt.base.errors import ExchangeNotAvailable
 
 
 class bithumb (Exchange):
@@ -15,7 +28,7 @@ class bithumb (Exchange):
         return self.deep_extend(super(bithumb, self).describe(), {
             'id': 'bithumb',
             'name': 'Bithumb',
-            'countries': 'KR',  # South Korea
+            'countries': ['KR'],  # South Korea
             'rateLimit': 500,
             'has': {
                 'CORS': True,
@@ -29,7 +42,7 @@ class bithumb (Exchange):
                     'private': 'https://api.bithumb.com',
                 },
                 'www': 'https://www.bithumb.com',
-                'doc': 'https://www.bithumb.com/u1/US127',
+                'doc': 'https://apidocs.bithumb.com',
             },
             'api': {
                 'public': {
@@ -38,8 +51,8 @@ class bithumb (Exchange):
                         'ticker/all',
                         'orderbook/{currency}',
                         'orderbook/all',
-                        'recent_transactions/{currency}',
-                        'recent_transactions/all',
+                        'transaction_history/{currency}',
+                        'transaction_history/all',
                     ],
                 },
                 'private': {
@@ -67,9 +80,24 @@ class bithumb (Exchange):
                     'taker': 0.15 / 100,
                 },
             },
+            'exceptions': {
+                'Bad Request(SSL)': BadRequest,
+                'Bad Request(Bad Method)': BadRequest,
+                'Bad Request.(Auth Data)': AuthenticationError,  # {"status": "5100", "message": "Bad Request.(Auth Data)"}
+                'Not Member': AuthenticationError,
+                'Invalid Apikey': AuthenticationError,  # {"status":"5300","message":"Invalid Apikey"}
+                'Method Not Allowed.(Access IP)': PermissionDenied,
+                'Method Not Allowed.(BTC Adress)': InvalidAddress,
+                'Method Not Allowed.(Access)': PermissionDenied,
+                'Database Fail': ExchangeNotAvailable,
+                'Invalid Parameter': BadRequest,
+                '5600': ExchangeError,
+                'Unknown Error': ExchangeError,
+                'After May 23th, recent_transactions is no longer, hence users will not be able to connect to recent_transactions': ExchangeError,  # {"status":"5100","message":"After May 23th, recent_transactions is no longer, hence users will not be able to connect to recent_transactions"}
+            },
         })
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         markets = self.publicGetTickerAll()
         currencies = list(markets['data'].keys())
         result = []
@@ -86,7 +114,6 @@ class bithumb (Exchange):
                     'base': base,
                     'quote': quote,
                     'info': market,
-                    'lot': None,
                     'active': True,
                     'precision': {
                         'amount': None,
@@ -145,6 +172,18 @@ class bithumb (Exchange):
         symbol = None
         if market:
             symbol = market['symbol']
+        open = self.safe_float(ticker, 'opening_price')
+        close = self.safe_float(ticker, 'closing_price')
+        change = None
+        percentage = None
+        average = None
+        if (close is not None) and(open is not None):
+            change = close - open
+            if open > 0:
+                percentage = change / open * 100
+            average = self.sum(open, close) / 2
+        vwap = self.safe_float(ticker, 'average_price')
+        baseVolume = self.safe_float(ticker, 'volume_1day')
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -152,17 +191,19 @@ class bithumb (Exchange):
             'high': self.safe_float(ticker, 'max_price'),
             'low': self.safe_float(ticker, 'min_price'),
             'bid': self.safe_float(ticker, 'buy_price'),
+            'bidVolume': None,
             'ask': self.safe_float(ticker, 'sell_price'),
-            'vwap': None,
-            'open': self.safe_float(ticker, 'opening_price'),
-            'close': self.safe_float(ticker, 'closing_price'),
-            'first': None,
-            'last': self.safe_float(ticker, 'last_trade'),
-            'change': None,
-            'percentage': None,
-            'average': self.safe_float(ticker, 'average_price'),
-            'baseVolume': self.safe_float(ticker, 'volume_1day'),
-            'quoteVolume': None,
+            'askVolume': None,
+            'vwap': vwap,
+            'open': open,
+            'close': close,
+            'last': close,
+            'previousClose': None,
+            'change': change,
+            'percentage': percentage,
+            'average': average,
+            'baseVolume': baseVolume,
+            'quoteVolume': baseVolume * vwap,
             'info': ticker,
         }
 
@@ -202,7 +243,7 @@ class bithumb (Exchange):
         timestamp -= 9 * 3600000  # they report UTC + 9 hours(server in list(Korean timezone.keys()))
         side = 'sell' if (trade['type'] == 'ask') else 'buy'
         return {
-            'id': None,
+            'id': self.safe_string(trade, 'cont_no'),
             'info': trade,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
@@ -210,14 +251,14 @@ class bithumb (Exchange):
             'order': None,
             'type': None,
             'side': side,
-            'price': float(trade['price']),
-            'amount': float(trade['units_traded']),
+            'price': self.safe_float(trade, 'price'),
+            'amount': self.safe_float(trade, 'units_traded'),
         }
 
     def fetch_trades(self, symbol, since=None, limit=None, params={}):
         self.load_markets()
         market = self.market(symbol)
-        response = self.publicGetRecentTransactionsCurrency(self.extend({
+        response = self.publicGetTransactionHistoryCurrency(self.extend({
             'currency': market['base'],
             'count': 100,  # max = 100
         }, params))
@@ -254,29 +295,34 @@ class bithumb (Exchange):
         }
 
     def cancel_order(self, id, symbol=None, params={}):
-        side = ('side' in list(params.keys()))
-        if not side:
+        side_in_params = ('side' in list(params.keys()))
+        if not side_in_params:
             raise ExchangeError(self.id + ' cancelOrder requires a side parameter(sell or buy) and a currency parameter')
-        side = 'purchase' if (side == 'buy') else 'sales'
         currency = ('currency' in list(params.keys()))
         if not currency:
             raise ExchangeError(self.id + ' cancelOrder requires a currency parameter')
+        side = 'bid' if (params['side'] == 'buy') else 'ask'
         return self.privatePostTradeCancel({
             'order_id': id,
-            'type': params['side'],
+            'type': side,
             'currency': params['currency'],
         })
 
-    def withdraw(self, currency, amount, address, tag=None, params={}):
+    def withdraw(self, code, amount, address, tag=None, params={}):
+        self.check_address(address)
+        self.load_markets()
+        currency = self.currency(code)
         request = {
             'units': amount,
             'address': address,
-            'currency': currency,
+            'currency': currency['id'],
         }
         if currency == 'XRP' or currency == 'XMR':
-            destination = ('destination' in list(params.keys()))
-            if not destination:
-                raise ExchangeError(self.id + ' ' + currency + ' withdraw requires an extra destination param')
+            destination = self.safe_string(params, 'destination')
+            if (tag is None) and(destination is None):
+                raise ExchangeError(self.id + ' ' + code + ' withdraw() requires a tag argument or an extra destination param')
+            elif tag is not None:
+                request['destination'] = tag
         response = self.privatePostTradeBtcWithdrawal(self.extend(request, params))
         return {
             'info': response,
@@ -310,6 +356,31 @@ class bithumb (Exchange):
                 'Api-Nonce': nonce,
             }
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
+
+    def handle_errors(self, httpCode, reason, url, method, headers, body, response=None):
+        if not isinstance(body, basestring):
+            return  # fallback to default error handler
+        if len(body) < 2:
+            return  # fallback to default error handler
+        if (body[0] == '{') or (body[0] == '['):
+            response = json.loads(body)
+            if 'status' in response:
+                #
+                #     {"status":"5100","message":"After May 23th, recent_transactions is no longer, hence users will not be able to connect to recent_transactions"}
+                #
+                status = self.safe_string(response, 'status')
+                message = self.safe_string(response, 'message')
+                if status is not None:
+                    if status == '0000':
+                        return  # no error
+                    feedback = self.id + ' ' + self.json(response)
+                    exceptions = self.exceptions
+                    if status in exceptions:
+                        raise exceptions[status](feedback)
+                    elif message in exceptions:
+                        raise exceptions[message](feedback)
+                    else:
+                        raise ExchangeError(feedback)
 
     def request(self, path, api='public', method='GET', params={}, headers=None, body=None):
         response = self.fetch2(path, api, method, params, headers, body)

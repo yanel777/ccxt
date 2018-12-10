@@ -17,7 +17,7 @@ class braziliex (Exchange):
         return self.deep_extend(super(braziliex, self).describe(), {
             'id': 'braziliex',
             'name': 'Braziliex',
-            'countries': 'BR',
+            'countries': ['BR'],
             'rateLimit': 1000,
             'has': {
                 'fetchCurrencies': True,
@@ -32,6 +32,7 @@ class braziliex (Exchange):
                 'www': 'https://braziliex.com/',
                 'doc': 'https://braziliex.com/exchange/api.php',
                 'fees': 'https://braziliex.com/exchange/fees.php',
+                'referral': 'https://braziliex.com/?ref=5FE61AB6F6D67DA885BC98BA27223465',
             },
             'api': {
                 'public': {
@@ -56,6 +57,10 @@ class braziliex (Exchange):
                     ],
                 },
             },
+            'commonCurrencies': {
+                'EPC': 'Epacoin',
+                'ABC': 'Anti Bureaucracy Coin',
+            },
             'fees': {
                 'trading': {
                     'maker': 0.005,
@@ -79,11 +84,9 @@ class braziliex (Exchange):
             uppercase = id.upper()
             code = self.common_currency_code(uppercase)
             active = self.safe_integer(currency, 'active') == 1
-            status = 'ok'
             maintenance = self.safe_integer(currency, 'under_maintenance')
             if maintenance != 0:
                 active = False
-                status = 'maintenance'
             canWithdraw = self.safe_integer(currency, 'is_withdrawal_active') == 1
             canDeposit = self.safe_integer(currency, 'is_deposit_active') == 1
             if not canWithdraw or not canDeposit:
@@ -93,7 +96,6 @@ class braziliex (Exchange):
                 'code': code,
                 'name': currency['name'],
                 'active': active,
-                'status': status,
                 'precision': precision,
                 'funding': {
                     'withdraw': {
@@ -131,7 +133,7 @@ class braziliex (Exchange):
             }
         return result
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         markets = self.publicGetTicker()
         ids = list(markets.keys())
         result = []
@@ -149,7 +151,6 @@ class braziliex (Exchange):
                 'amount': 8,
                 'price': 8,
             }
-            lot = math.pow(10, -precision['amount'])
             result.append({
                 'id': id,
                 'symbol': symbol.upper(),
@@ -158,11 +159,10 @@ class braziliex (Exchange):
                 'baseId': baseId,
                 'quoteId': quoteId,
                 'active': active,
-                'lot': lot,
                 'precision': precision,
                 'limits': {
                     'amount': {
-                        'min': lot,
+                        'min': math.pow(10, -precision['amount']),
                         'max': math.pow(10, precision['amount']),
                     },
                     'price': {
@@ -182,24 +182,27 @@ class braziliex (Exchange):
         symbol = market['symbol']
         timestamp = ticker['date']
         ticker = ticker['ticker']
+        last = self.safe_float(ticker, 'last')
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
-            'high': float(ticker['highestBid24']),
-            'low': float(ticker['lowestAsk24']),
-            'bid': float(ticker['highestBid']),
-            'ask': float(ticker['lowestAsk']),
+            'high': self.safe_float(ticker, 'highestBid24'),
+            'low': self.safe_float(ticker, 'lowestAsk24'),
+            'bid': self.safe_float(ticker, 'highestBid'),
+            'bidVolume': None,
+            'ask': self.safe_float(ticker, 'lowestAsk'),
+            'askVolume': None,
             'vwap': None,
             'open': None,
-            'close': None,
-            'first': None,
-            'last': float(ticker['last']),
-            'change': float(ticker['percentChange']),
+            'close': last,
+            'last': last,
+            'previousClose': None,
+            'change': self.safe_float(ticker, 'percentChange'),
             'percentage': None,
             'average': None,
-            'baseVolume': float(ticker['baseVolume24']),
-            'quoteVolume': float(ticker['quoteVolume24']),
+            'baseVolume': self.safe_float(ticker, 'baseVolume24'),
+            'quoteVolume': self.safe_float(ticker, 'quoteVolume24'),
             'info': ticker,
         }
 
@@ -245,10 +248,10 @@ class braziliex (Exchange):
             timestamp = self.parse8601(trade['date_exec'])
         else:
             timestamp = self.parse8601(trade['date'])
-        price = float(trade['price'])
-        amount = float(trade['amount'])
+        price = self.safe_float(trade, 'price')
+        amount = self.safe_float(trade, 'amount')
         symbol = market['symbol']
-        cost = float(trade['total'])
+        cost = self.safe_float(trade, 'total')
         orderId = self.safe_string(trade, 'order_number')
         return {
             'timestamp': timestamp,
@@ -293,7 +296,7 @@ class braziliex (Exchange):
 
     def parse_order(self, order, market=None):
         symbol = None
-        if not market:
+        if market is None:
             marketId = self.safe_string(order, 'market')
             if marketId:
                 if marketId in self.markets_by_id:
@@ -303,12 +306,12 @@ class braziliex (Exchange):
         timestamp = self.safe_value(order, 'timestamp')
         if not timestamp:
             timestamp = self.parse8601(order['date'])
-        price = float(order['price'])
+        price = self.safe_float(order, 'price')
         cost = self.safe_float(order, 'total', 0.0)
         amount = self.safe_float(order, 'amount')
         filledPercentage = self.safe_float(order, 'progress')
         filled = amount * filledPercentage
-        remaining = self.amount_to_precision(symbol, amount - filled)
+        remaining = float(self.amount_to_precision(symbol, amount - filled))
         info = order
         if 'info' in info:
             info = order['info']
@@ -316,6 +319,7 @@ class braziliex (Exchange):
             'id': order['order_number'],
             'datetime': self.iso8601(timestamp),
             'timestamp': timestamp,
+            'lastTradeTimestamp': None,
             'status': 'open',
             'symbol': symbol,
             'type': 'limit',
@@ -398,14 +402,12 @@ class braziliex (Exchange):
             'currency': currency['id'],
         }, params))
         address = self.safe_string(response, 'deposit_address')
-        if not address:
-            raise ExchangeError(self.id + ' fetchDepositAddress failed: ' + self.last_http_response)
+        self.check_address(address)
         tag = self.safe_string(response, 'payment_id')
         return {
             'currency': code,
             'address': address,
             'tag': tag,
-            'status': 'ok',
             'info': response,
         }
 

@@ -97,7 +97,7 @@ class coingi (Exchange):
             },
         })
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         response = None
         try:
             self.parseJsonResponse = False
@@ -121,19 +121,17 @@ class coingi (Exchange):
                 'amount': 8,
                 'price': 8,
             }
-            lot = math.pow(10, -precision['amount'])
             result.append({
                 'id': id,
                 'symbol': symbol,
                 'base': base,
                 'quote': quote,
                 'info': id,
-                'lot': lot,
                 'active': True,
                 'precision': precision,
                 'limits': {
                     'amount': {
-                        'min': lot,
+                        'min': math.pow(10, -precision['amount']),
                         'max': math.pow(10, precision['amount']),
                     },
                     'price': {
@@ -195,12 +193,14 @@ class coingi (Exchange):
             'high': ticker['high'],
             'low': ticker['low'],
             'bid': ticker['highestBid'],
+            'bidVolume': None,
             'ask': ticker['lowestAsk'],
+            'askVolume': None,
             'vwap': None,
             'open': None,
             'close': None,
-            'first': None,
             'last': None,
+            'previousClose': None,
             'change': None,
             'percentage': None,
             'average': None,

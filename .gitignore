@@ -2,6 +2,7 @@
 # You shouldn't edit these files, as they're generated automatically from ccxt.js by build scripts.
 # Please read https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md#multilanguage-support for details.
 #
+.vscode
 build/*
 node_modules/
 npm-debug.log
@@ -18,7 +19,6 @@ coverage
 .nyc_output
 travis-keys.sh
 ccxt.wiki/
-package-lock.json
 exchanges.json
 ccxt.sublime-workspace
 .idea
@@ -26,3 +26,7 @@ yarn.lock
 keys.local.json
 nbproject/
 vendor/
+python/package-lock.json
+python/package.json
+python/keys.json
+python/LICENSE.txt

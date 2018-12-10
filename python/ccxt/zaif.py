@@ -5,7 +5,10 @@
 
 from ccxt.base.exchange import Exchange
 import hashlib
+import math
+import json
 from ccxt.base.errors import ExchangeError
+from ccxt.base.errors import BadRequest
 
 
 class zaif (Exchange):
@@ -14,7 +17,7 @@ class zaif (Exchange):
         return self.deep_extend(super(zaif, self).describe(), {
             'id': 'zaif',
             'name': 'Zaif',
-            'countries': 'JP',
+            'countries': ['JP'],
             'rateLimit': 2000,
             'version': '1',
             'has': {
@@ -35,6 +38,14 @@ class zaif (Exchange):
                     'https://www.npmjs.com/package/zaif.jp',
                     'https://github.com/you21979/node-zaif',
                 ],
+                'fees': 'https://zaif.jp/fee?lang=en',
+            },
+            'fees': {
+                'trading': {
+                    'percentage': True,
+                    'taker': -0.0001,
+                    'maker': -0.0005,
+                },
             },
             'api': {
                 'public': {
@@ -92,9 +103,16 @@ class zaif (Exchange):
                     ],
                 },
             },
+            'exceptions': {
+                'exact': {
+                    'unsupported currency_pair': BadRequest,  # {"error": "unsupported currency_pair"}
+                },
+                'broad': {
+                },
+            },
         })
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         markets = self.publicGetCurrencyPairsAll()
         result = []
         for p in range(0, len(markets)):
@@ -102,11 +120,31 @@ class zaif (Exchange):
             id = market['currency_pair']
             symbol = market['name']
             base, quote = symbol.split('/')
+            precision = {
+                'amount': -math.log10(market['item_unit_step']),
+                'price': market['aux_unit_point'],
+            }
             result.append({
                 'id': id,
                 'symbol': symbol,
                 'base': base,
                 'quote': quote,
+                'active': True,  # can trade or not
+                'precision': precision,
+                'limits': {
+                    'amount': {
+                        'min': self.safe_float(market, 'item_unit_min'),
+                        'max': None,
+                    },
+                    'price': {
+                        'min': self.safe_float(market, 'aux_unit_min'),
+                        'max': None,
+                    },
+                    'cost': {
+                        'min': None,
+                        'max': None,
+                    },
+                },
                 'info': market,
             })
         return result
@@ -148,7 +186,10 @@ class zaif (Exchange):
         timestamp = self.milliseconds()
         vwap = ticker['vwap']
         baseVolume = ticker['volume']
-        quoteVolume = baseVolume * vwap
+        quoteVolume = None
+        if baseVolume is not None and vwap is not None:
+            quoteVolume = baseVolume * vwap
+        last = ticker['last']
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -156,12 +197,14 @@ class zaif (Exchange):
             'high': ticker['high'],
             'low': ticker['low'],
             'bid': ticker['bid'],
+            'bidVolume': None,
             'ask': ticker['ask'],
+            'askVolume': None,
             'vwap': vwap,
             'open': None,
-            'close': None,
-            'first': None,
-            'last': ticker['last'],
+            'close': last,
+            'last': last,
+            'previousClose': None,
             'change': None,
             'percentage': None,
             'average': None,
@@ -175,6 +218,8 @@ class zaif (Exchange):
         timestamp = trade['date'] * 1000
         id = self.safe_string(trade, 'id')
         id = self.safe_string(trade, 'tid', id)
+        price = self.safe_float(trade, 'price')
+        amount = self.safe_float(trade, 'amount')
         if not market:
             market = self.markets_by_id[trade['currency_pair']]
         return {
@@ -185,8 +230,8 @@ class zaif (Exchange):
             'symbol': market['symbol'],
             'type': None,
             'side': side,
-            'price': trade['price'],
-            'amount': trade['amount'],
+            'price': price,
+            'amount': amount,
         }
 
     def fetch_trades(self, symbol, since=None, limit=None, params={}):
@@ -195,6 +240,11 @@ class zaif (Exchange):
         response = self.publicGetTradesPair(self.extend({
             'pair': market['id'],
         }, params))
+        numTrades = len(response)
+        if numTrades == 1:
+            firstTrade = response[0]
+            if not firstTrade:
+                response = []
         return self.parse_trades(response, market, since, limit)
 
     def create_order(self, symbol, type, side, amount, price=None, params={}):
@@ -228,6 +278,7 @@ class zaif (Exchange):
             'id': str(order['id']),
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
+            'lastTradeTimestamp': None,
             'status': 'open',
             'symbol': market['symbol'],
             'type': 'limit',
@@ -258,7 +309,7 @@ class zaif (Exchange):
             # 'is_token': False,
             # 'is_token_both': False,
         }
-        if symbol:
+        if symbol is not None:
             market = self.market(symbol)
             request['currency_pair'] = market['id']
         response = self.privatePostActiveOrders(self.extend(request, params))
@@ -277,28 +328,37 @@ class zaif (Exchange):
             # 'end': 1503821051,
             # 'is_token': False,
         }
-        if symbol:
+        if symbol is not None:
             market = self.market(symbol)
             request['currency_pair'] = market['id']
         response = self.privatePostTradeHistory(self.extend(request, params))
         return self.parse_orders(response['return'], market, since, limit)
 
-    def withdraw(self, currency, amount, address, tag=None, params={}):
+    def withdraw(self, code, amount, address, tag=None, params={}):
+        self.check_address(address)
         self.load_markets()
-        if currency == 'JPY':
-            raise ExchangeError(self.id + ' does not allow ' + currency + ' withdrawals')
-        result = self.privatePostWithdraw(self.extend({
-            'currency': currency,
+        currency = self.currency(code)
+        if code == 'JPY':
+            raise ExchangeError(self.id + ' withdraw() does not allow ' + code + ' withdrawals')
+        request = {
+            'currency': currency['id'],
             'amount': amount,
             'address': address,
-            # 'message': 'Hinot ',  # XEM only
+            # 'message': 'Hinot ',  # XEM and others
             # 'opt_fee': 0.003,  # BTC and MONA only
-        }, params))
+        }
+        if tag is not None:
+            request['message'] = tag
+        result = self.privatePostWithdraw(self.extend(request, params))
         return {
             'info': result,
             'id': result['return']['txid'],
             'fee': result['return']['fee'],
         }
+
+    def nonce(self):
+        nonce = float(self.milliseconds() / 1000)
+        return '{:.8f}'.format(nonce)
 
     def sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
         url = self.urls['api'] + '/'
@@ -326,11 +386,24 @@ class zaif (Exchange):
             }
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def request(self, path, api='api', method='GET', params={}, headers=None, body=None):
-        response = self.fetch2(path, api, method, params, headers, body)
-        if 'error' in response:
-            raise ExchangeError(self.id + ' ' + response['error'])
-        if 'success' in response:
-            if not response['success']:
-                raise ExchangeError(self.id + ' ' + self.json(response))
-        return response
+    def handle_errors(self, httpCode, reason, url, method, headers, body, response=None):
+        if not self.is_json_encoded_object(body):
+            return  # fallback to default error handler
+        response = json.loads(body)
+        #
+        #     {"error": "unsupported currency_pair"}
+        #
+        feedback = self.id + ' ' + body
+        error = self.safe_string(response, 'error')
+        if error is not None:
+            exact = self.exceptions['exact']
+            if error in exact:
+                raise exact[error](feedback)
+            broad = self.exceptions['broad']
+            broadKey = self.findBroadlyMatchedKey(broad, error)
+            if broadKey is not None:
+                raise broad[broadKey](feedback)
+            raise ExchangeError(feedback)  # unknown message
+        success = self.safe_value(response, 'success', True)
+        if not success:
+            raise ExchangeError(feedback)

@@ -13,7 +13,7 @@ class _1btcxe (Exchange):
         return self.deep_extend(super(_1btcxe, self).describe(), {
             'id': '_1btcxe',
             'name': '1BTCXE',
-            'countries': 'PA',  # Panama
+            'countries': ['PA'],  # Panama
             'comment': 'Crypto Capital API',
             'has': {
                 'CORS': True,
@@ -56,7 +56,7 @@ class _1btcxe (Exchange):
             },
         })
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         return [
             {'id': 'USD', 'symbol': 'BTC/USD', 'base': 'BTC', 'quote': 'USD'},
             {'id': 'EUR', 'symbol': 'BTC/EUR', 'base': 'BTC', 'quote': 'EUR'},
@@ -114,25 +114,28 @@ class _1btcxe (Exchange):
             'currency': self.market_id(symbol),
         }, params))
         ticker = response['stats']
-        timestamp = self.milliseconds()
+        last = self.safe_float(ticker, 'last_price')
         return {
             'symbol': symbol,
-            'timestamp': timestamp,
-            'datetime': self.iso8601(timestamp),
-            'high': float(ticker['max']),
-            'low': float(ticker['min']),
-            'bid': float(ticker['bid']),
-            'ask': float(ticker['ask']),
+            'timestamp': None,
+            'datetime': None,
+            'high': self.safe_float(ticker, 'max'),
+            'low': self.safe_float(ticker, 'min'),
+            'bid': self.safe_float(ticker, 'bid'),
+            'bidVolume': None,
+            'ask': self.safe_float(ticker, 'ask'),
+            'askVolume': None,
             'vwap': None,
-            'open': float(ticker['open']),
-            'close': None,
-            'first': None,
-            'last': float(ticker['last_price']),
-            'change': float(ticker['daily_change']),
+            'open': self.safe_float(ticker, 'open'),
+            'close': last,
+            'last': last,
+            'previousClose': None,
+            'change': self.safe_float(ticker, 'daily_change'),
             'percentage': None,
             'average': None,
             'baseVolume': None,
-            'quoteVolume': float(ticker['total_btc_traded']),
+            'quoteVolume': self.safe_float(ticker, 'total_btc_traded'),
+            'info': ticker,
         }
 
     def parse_ohlcv(self, ohlcv, market=None, timeframe='1d', since=None, limit=None):
@@ -151,7 +154,7 @@ class _1btcxe (Exchange):
             'currency': market['id'],
             'timeframe': self.timeframes[timeframe],
         }, params))
-        ohlcvs = self.omit(response['historical-prices'], 'request_currency')
+        ohlcvs = self.to_array(self.omit(response['historical-prices'], 'request_currency'))
         return self.parse_ohlcvs(ohlcvs, market, timeframe, since, limit)
 
     def parse_trade(self, trade, market):
@@ -165,8 +168,8 @@ class _1btcxe (Exchange):
             'order': None,
             'type': None,
             'side': trade['maker_type'],
-            'price': float(trade['price']),
-            'amount': float(trade['amount']),
+            'price': self.safe_float(trade, 'price'),
+            'amount': self.safe_float(trade, 'amount'),
         }
 
     def fetch_trades(self, symbol, since=None, limit=None, params={}):
@@ -174,7 +177,7 @@ class _1btcxe (Exchange):
         response = self.publicGetTransactions(self.extend({
             'currency': market['id'],
         }, params))
-        trades = self.omit(response['transactions'], 'request_currency')
+        trades = self.to_array(self.omit(response['transactions'], 'request_currency'))
         return self.parse_trades(trades, market, since, limit)
 
     def create_order(self, symbol, type, side, amount, price=None, params={}):
@@ -195,13 +198,16 @@ class _1btcxe (Exchange):
     def cancel_order(self, id, symbol=None, params={}):
         return self.privatePostOrdersCancel({'id': id})
 
-    def withdraw(self, currency, amount, address, tag=None, params={}):
+    def withdraw(self, code, amount, address, tag=None, params={}):
+        self.check_address(address)
         self.load_markets()
-        response = self.privatePostWithdrawalsNew(self.extend({
-            'currency': currency,
+        currency = self.currency(code)
+        request = {
+            'currency': currency['id'],
             'amount': float(amount),
             'address': address,
-        }, params))
+        }
+        response = self.privatePostWithdrawalsNew(self.extend(request, params))
         return {
             'info': response,
             'id': response['result']['uuid'],

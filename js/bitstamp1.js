@@ -12,7 +12,7 @@ module.exports = class bitstamp1 extends Exchange {
         return this.deepExtend (super.describe (), {
             'id': 'bitstamp1',
             'name': 'Bitstamp v1',
-            'countries': 'GB',
+            'countries': [ 'GB' ],
             'rateLimit': 1000,
             'version': 'v1',
             'has': {
@@ -88,22 +88,27 @@ module.exports = class bitstamp1 extends Exchange {
             throw new ExchangeError (this.id + ' ' + this.version + " fetchTicker doesn't support " + symbol + ', use it for BTC/USD only');
         let ticker = await this.publicGetTicker (params);
         let timestamp = parseInt (ticker['timestamp']) * 1000;
-        let vwap = parseFloat (ticker['vwap']);
-        let baseVolume = parseFloat (ticker['volume']);
-        let quoteVolume = baseVolume * vwap;
+        let vwap = this.safeFloat (ticker, 'vwap');
+        let baseVolume = this.safeFloat (ticker, 'volume');
+        let quoteVolume = undefined;
+        if (baseVolume !== undefined && vwap !== undefined)
+            quoteVolume = baseVolume * vwap;
+        let last = this.safeFloat (ticker, 'last');
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'high': parseFloat (ticker['high']),
-            'low': parseFloat (ticker['low']),
-            'bid': parseFloat (ticker['bid']),
-            'ask': parseFloat (ticker['ask']),
+            'high': this.safeFloat (ticker, 'high'),
+            'low': this.safeFloat (ticker, 'low'),
+            'bid': this.safeFloat (ticker, 'bid'),
+            'bidVolume': undefined,
+            'ask': this.safeFloat (ticker, 'ask'),
+            'askVolume': undefined,
             'vwap': vwap,
-            'open': parseFloat (ticker['open']),
-            'close': undefined,
-            'first': undefined,
-            'last': parseFloat (ticker['last']),
+            'open': this.safeFloat (ticker, 'open'),
+            'close': last,
+            'last': last,
+            'previousClose': undefined,
             'change': undefined,
             'percentage': undefined,
             'average': undefined,
@@ -138,8 +143,8 @@ module.exports = class bitstamp1 extends Exchange {
             'order': order,
             'type': undefined,
             'side': side,
-            'price': parseFloat (trade['price']),
-            'amount': parseFloat (trade['amount']),
+            'price': this.safeFloat (trade, 'price'),
+            'amount': this.safeFloat (trade, 'amount'),
         };
     }
 
@@ -193,24 +198,27 @@ module.exports = class bitstamp1 extends Exchange {
         return await this.privatePostCancelOrder ({ 'id': id });
     }
 
-    parseOrderStatus (order) {
-        if ((order['status'] === 'Queue') || (order['status'] === 'Open'))
-            return 'open';
-        if (order['status'] === 'Finished')
-            return 'closed';
-        return order['status'];
+    parseOrderStatus (status) {
+        let statuses = {
+            'In Queue': 'open',
+            'Open': 'open',
+            'Finished': 'closed',
+            'Canceled': 'canceled',
+        };
+        return (status in statuses) ? statuses[status] : status;
     }
 
-    async fetchOrderStatus (id, symbol = undefined) {
+    async fetchOrderStatus (id, symbol = undefined, params = {}) {
         await this.loadMarkets ();
-        let response = await this.privatePostOrderStatus ({ 'id': id });
+        let request = { 'id': id };
+        let response = await this.privatePostOrderStatus (this.extend (request, params));
         return this.parseOrderStatus (response);
     }
 
     async fetchMyTrades (symbol = undefined, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets ();
         let market = undefined;
-        if (symbol)
+        if (symbol !== undefined)
             market = this.market (symbol);
         let pair = market ? market['id'] : 'all';
         let request = this.extend ({ 'id': pair }, params);

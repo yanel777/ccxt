@@ -15,7 +15,7 @@ class acx (Exchange):
         return self.deep_extend(super(acx, self).describe(), {
             'id': 'acx',
             'name': 'ACX',
-            'countries': 'AU',
+            'countries': ['AU'],
             'rateLimit': 1000,
             'version': 'v2',
             'has': {
@@ -23,6 +23,7 @@ class acx (Exchange):
                 'fetchTickers': True,
                 'fetchOHLCV': True,
                 'withdraw': True,
+                'fetchOrder': True,
             },
             'timeframes': {
                 '1m': '1',
@@ -47,15 +48,17 @@ class acx (Exchange):
             'api': {
                 'public': {
                     'get': [
+                        'depth',  # Get depth or specified market Both asks and bids are sorted from highest price to lowest.
+                        'k_with_pending_trades',  # Get K data with pending trades, which are the trades not included in K data yet, because there's delay between trade generated and processed by K data generator
+                        'k',  # Get OHLC(k line) of specific market
                         'markets',  # Get all available markets
+                        'order_book',  # Get the order book of specified market
+                        'order_book/{market}',
                         'tickers',  # Get ticker of all markets
                         'tickers/{market}',  # Get ticker of specific market
-                        'trades',  # Get recent trades on market, each trade is included only once Trades are sorted in reverse creation order.
-                        'order_book',  # Get the order book of specified market
-                        'depth',  # Get depth or specified market Both asks and bids are sorted from highest price to lowest.
-                        'k',  # Get OHLC(k line) of specific market
-                        'k_with_pending_trades',  # Get K data with pending trades, which are the trades not included in K data yet, because there's delay between trade generated and processed by K data generator
                         'timestamp',  # Get server current time, in seconds since Unix epoch
+                        'trades',  # Get recent trades on market, each trade is included only once Trades are sorted in reverse creation order.
+                        'trades/{market}',
                     ],
                 },
                 'private': {
@@ -93,26 +96,41 @@ class acx (Exchange):
                 },
             },
             'exceptions': {
-                2002: InsufficientFunds,
-                2003: OrderNotFound,
+                '2002': InsufficientFunds,
+                '2003': OrderNotFound,
             },
         })
 
-    def fetch_markets(self):
+    def fetch_markets(self, params={}):
         markets = self.publicGetMarkets()
         result = []
         for p in range(0, len(markets)):
             market = markets[p]
             id = market['id']
             symbol = market['name']
-            base, quote = symbol.split('/')
+            baseId = self.safe_string(market, 'base_unit')
+            quoteId = self.safe_string(market, 'quote_unit')
+            if (baseId is None) or (quoteId is None):
+                ids = symbol.split('/')
+                baseId = ids[0].lower()
+                quoteId = ids[1].lower()
+            base = baseId.upper()
+            quote = quoteId.upper()
             base = self.common_currency_code(base)
             quote = self.common_currency_code(quote)
+            # todo: find out their undocumented precision and limits
+            precision = {
+                'amount': 8,
+                'price': 8,
+            }
             result.append({
                 'id': id,
                 'symbol': symbol,
                 'base': base,
                 'quote': quote,
+                'baseId': baseId,
+                'quoteId': quoteId,
+                'precision': precision,
                 'info': market,
             })
         return result
@@ -141,14 +159,11 @@ class acx (Exchange):
         request = {
             'market': market['id'],
         }
-        if limit is None:
+        if limit is not None:
             request['limit'] = limit  # default = 300
         orderbook = self.publicGetDepth(self.extend(request, params))
         timestamp = orderbook['timestamp'] * 1000
-        result = self.parse_order_book(orderbook, timestamp)
-        result['bids'] = self.sort_by(result['bids'], 0, True)
-        result['asks'] = self.sort_by(result['asks'], 0)
-        return result
+        return self.parse_order_book(orderbook, timestamp)
 
     def parse_ticker(self, ticker, market=None):
         timestamp = ticker['at'] * 1000
@@ -156,23 +171,26 @@ class acx (Exchange):
         symbol = None
         if market:
             symbol = market['symbol']
+        last = self.safe_float(ticker, 'last')
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
-            'high': self.safe_float(ticker, 'high', None),
-            'low': self.safe_float(ticker, 'low', None),
-            'bid': self.safe_float(ticker, 'buy', None),
-            'ask': self.safe_float(ticker, 'sell', None),
+            'high': self.safe_float(ticker, 'high'),
+            'low': self.safe_float(ticker, 'low'),
+            'bid': self.safe_float(ticker, 'buy'),
+            'bidVolume': None,
+            'ask': self.safe_float(ticker, 'sell'),
+            'askVolume': None,
             'vwap': None,
-            'open': None,
-            'close': None,
-            'first': None,
-            'last': self.safe_float(ticker, 'last', None),
+            'open': self.safe_float(ticker, 'open'),
+            'close': last,
+            'last': last,
+            'previousClose': None,
             'change': None,
             'percentage': None,
             'average': None,
-            'baseVolume': self.safe_float(ticker, 'vol', None),
+            'baseVolume': self.safe_float(ticker, 'vol'),
             'quoteVolume': None,
             'info': ticker,
         }
@@ -245,7 +263,7 @@ class acx (Exchange):
     def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=None, params={}):
         self.load_markets()
         market = self.market(symbol)
-        if not limit:
+        if limit is None:
             limit = 500  # default is 30
         request = {
             'market': market['id'],
@@ -259,11 +277,11 @@ class acx (Exchange):
 
     def parse_order(self, order, market=None):
         symbol = None
-        if market:
+        if market is not None:
             symbol = market['symbol']
         else:
             marketId = order['market']
-            symbol = self.marketsById[marketId]['symbol']
+            symbol = self.markets_by_id[marketId]['symbol']
         timestamp = self.parse8601(order['created_at'])
         state = order['state']
         status = None
@@ -277,18 +295,26 @@ class acx (Exchange):
             'id': str(order['id']),
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
+            'lastTradeTimestamp': None,
             'status': status,
             'symbol': symbol,
             'type': order['ord_type'],
             'side': order['side'],
-            'price': float(order['price']),
-            'amount': float(order['volume']),
-            'filled': float(order['executed_volume']),
-            'remaining': float(order['remaining_volume']),
+            'price': self.safe_float(order, 'price'),
+            'amount': self.safe_float(order, 'volume'),
+            'filled': self.safe_float(order, 'executed_volume'),
+            'remaining': self.safe_float(order, 'remaining_volume'),
             'trades': None,
             'fee': None,
             'info': order,
         }
+
+    def fetch_order(self, id, symbol=None, params={}):
+        self.load_markets()
+        response = self.privateGetOrder(self.extend({
+            'id': int(id),
+        }, params))
+        return self.parse_order(response)
 
     def create_order(self, symbol, type, side, amount, price=None, params={}):
         self.load_markets()
@@ -301,7 +327,7 @@ class acx (Exchange):
         if type == 'limit':
             order['price'] = str(price)
         response = self.privatePostOrders(self.extend(order, params))
-        market = self.marketsById[response['market']]
+        market = self.markets_by_id[response['market']]
         return self.parse_order(response, market)
 
     def cancel_order(self, id, symbol=None, params={}):
@@ -313,13 +339,18 @@ class acx (Exchange):
             raise OrderNotFound(self.id + ' ' + self.json(order))
         return order
 
-    def withdraw(self, currency, amount, address, tag=None, params={}):
+    def withdraw(self, code, amount, address, tag=None, params={}):
+        self.check_address(address)
         self.load_markets()
-        result = self.privatePostWithdraw(self.extend({
-            'currency': currency.lower(),
+        currency = self.currency(code)
+        # they have XRP but no docs on memo/tag
+        request = {
+            'currency': currency['id'],
             'sum': amount,
             'address': address,
-        }, params))
+        }
+        result = self.privatePostWithdraw(self.extend(request, params))
+        # withdrawal response is undocumented
         return {
             'info': result,
             'id': None,
@@ -359,8 +390,8 @@ class acx (Exchange):
                 'tonce': nonce,
             }, params))
             auth = method + '|' + request + '|' + query
-            signature = self.hmac(self.encode(auth), self.encode(self.secret))
-            suffix = query + '&signature=' + signature
+            signed = self.hmac(self.encode(auth), self.encode(self.secret))
+            suffix = query + '&signature=' + signed
             if method == 'GET':
                 url += '?' + suffix
             else:
@@ -368,7 +399,7 @@ class acx (Exchange):
                 headers = {'Content-Type': 'application/x-www-form-urlencoded'}
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    def handle_errors(self, code, reason, url, method, headers, body):
+    def handle_errors(self, code, reason, url, method, headers, body, response=None):
         if code == 400:
             response = json.loads(body)
             error = self.safe_value(response, 'error')

@@ -3,7 +3,7 @@
 //  ---------------------------------------------------------------------------
 
 const Exchange = require ('./base/Exchange');
-const { ExchangeError } = require ('./base/errors');
+const { ExchangeError, ArgumentsRequired } = require ('./base/errors');
 
 //  ---------------------------------------------------------------------------
 
@@ -12,7 +12,7 @@ module.exports = class mercado extends Exchange {
         return this.deepExtend (super.describe (), {
             'id': 'mercado',
             'name': 'Mercado Bitcoin',
-            'countries': 'BR', // Brazil
+            'countries': [ 'BR' ], // Brazil
             'rateLimit': 1000,
             'version': 'v3',
             'has': {
@@ -63,6 +63,7 @@ module.exports = class mercado extends Exchange {
                 'BTC/BRL': { 'id': 'BRLBTC', 'symbol': 'BTC/BRL', 'base': 'BTC', 'quote': 'BRL', 'suffix': 'Bitcoin' },
                 'LTC/BRL': { 'id': 'BRLLTC', 'symbol': 'LTC/BRL', 'base': 'LTC', 'quote': 'BRL', 'suffix': 'Litecoin' },
                 'BCH/BRL': { 'id': 'BRLBCH', 'symbol': 'BCH/BRL', 'base': 'BCH', 'quote': 'BRL', 'suffix': 'BCash' },
+                'XRP/BRL': { 'id': 'BRLXRP', 'symbol': 'XRP/BRL', 'base': 'XRP', 'quote': 'BRL', 'suffix': 'Ripple' },
             },
             'fees': {
                 'trading': {
@@ -88,23 +89,26 @@ module.exports = class mercado extends Exchange {
         }, params));
         let ticker = response['ticker'];
         let timestamp = parseInt (ticker['date']) * 1000;
+        let last = this.safeFloat (ticker, 'last');
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
-            'high': parseFloat (ticker['high']),
-            'low': parseFloat (ticker['low']),
-            'bid': parseFloat (ticker['buy']),
-            'ask': parseFloat (ticker['sell']),
+            'high': this.safeFloat (ticker, 'high'),
+            'low': this.safeFloat (ticker, 'low'),
+            'bid': this.safeFloat (ticker, 'buy'),
+            'bidVolume': undefined,
+            'ask': this.safeFloat (ticker, 'sell'),
+            'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
-            'close': undefined,
-            'first': undefined,
-            'last': parseFloat (ticker['last']),
+            'close': last,
+            'last': last,
+            'previousClose': undefined,
             'change': undefined,
             'percentage': undefined,
             'average': undefined,
-            'baseVolume': parseFloat (ticker['vol']),
+            'baseVolume': this.safeFloat (ticker, 'vol'),
             'quoteVolume': undefined,
             'info': ticker,
         };
@@ -128,9 +132,18 @@ module.exports = class mercado extends Exchange {
 
     async fetchTrades (symbol, since = undefined, limit = undefined, params = {}) {
         let market = this.market (symbol);
-        let response = await this.publicGetCoinTrades (this.extend ({
+        let method = 'publicGetCoinTrades';
+        let request = {
             'coin': market['base'],
-        }, params));
+        };
+        if (since !== undefined) {
+            method += 'From';
+            request['from'] = parseInt (since / 1000);
+        }
+        let to = this.safeInteger (params, 'to');
+        if (to !== undefined)
+            method += 'To';
+        let response = await this[method] (this.extend (request, params));
         return this.parseTrades (response, market, since, limit);
     }
 
@@ -170,36 +183,88 @@ module.exports = class mercado extends Exchange {
     }
 
     async cancelOrder (id, symbol = undefined, params = {}) {
-        if (!symbol)
-            throw new ExchangeError (this.id + ' cancelOrder() requires a symbol argument');
+        if (symbol === undefined)
+            throw new ArgumentsRequired (this.id + ' cancelOrder() requires a symbol argument');
         await this.loadMarkets ();
         let market = this.market (symbol);
-        return await this.privatePostCancelOrder (this.extend ({
+        let response = await this.privatePostCancelOrder (this.extend ({
             'coin_pair': market['id'],
             'order_id': id,
         }, params));
+        //
+        //     {         response_data: { order: {           order_id:    2176769,
+        //                                                  coin_pair:   "BRLBCH",
+        //                                                 order_type:    2,
+        //                                                     status:    3,
+        //                                                  has_fills:    false,
+        //                                                   quantity:   "0.10000000",
+        //                                                limit_price:   "1996.15999",
+        //                                          executed_quantity:   "0.00000000",
+        //                                         executed_price_avg:   "0.00000",
+        //                                                        fee:   "0.00000000",
+        //                                          created_timestamp:   "1536956488",
+        //                                          updated_timestamp:   "1536956499",
+        //                                                 operations: []              } },
+        //                 status_code:    100,
+        //       server_unix_timestamp:   "1536956499"                                      }
+        //
+        return this.parseOrder (response['response_data']['order'], market);
+    }
+
+    parseOrderStatus (status) {
+        const statuses = {
+            '2': 'open',
+            '3': 'canceled',
+            '4': 'closed',
+        };
+        return this.safeString (statuses, status, status);
     }
 
     parseOrder (order, market = undefined) {
+        //
+        //     {
+        //         "order_id": 4,
+        //         "coin_pair": "BRLBTC",
+        //         "order_type": 1,
+        //         "status": 2,
+        //         "has_fills": true,
+        //         "quantity": "2.00000000",
+        //         "limit_price": "900.00000",
+        //         "executed_quantity": "1.00000000",
+        //         "executed_price_avg": "900.00000",
+        //         "fee": "0.00300000",
+        //         "created_timestamp": "1453838494",
+        //         "updated_timestamp": "1453838494",
+        //         "operations": [
+        //             {
+        //                 "operation_id": 1,
+        //                 "quantity": "1.00000000",
+        //                 "price": "900.00000",
+        //                 "fee_rate": "0.30",
+        //                 "executed_timestamp": "1453838494",
+        //             },
+        //         ],
+        //     }
+        //
+        const id = this.safeString (order, 'order_id');
         let side = undefined;
         if ('order_type' in order)
             side = (order['order_type'] === 1) ? 'buy' : 'sell';
-        let status = order['status'];
+        let status = this.parseOrderStatus (this.safeString (order, 'status'));
         let symbol = undefined;
-        if (!market) {
-            if ('coin_pair' in order)
-                if (order['coin_pair'] in this.markets_by_id)
-                    market = this.markets_by_id[order['coin_pair']];
+        if (market === undefined) {
+            let marketId = this.safeString (order, 'coin_pair');
+            market = this.safeValue (this.markets_by_id, marketId);
         }
-        if (market)
+        if (market !== undefined) {
             symbol = market['symbol'];
-        let timestamp = undefined;
-        if ('created_timestamp' in order)
-            timestamp = parseInt (order['created_timestamp']) * 1000;
-        if ('updated_timestamp' in order)
-            timestamp = parseInt (order['updated_timestamp']) * 1000;
+        }
+        let timestamp = this.safeInteger (order, 'created_timestamp');
+        if (timestamp !== undefined) {
+            timestamp = timestamp * 1000;
+        }
         let fee = {
-            'cost': parseFloat (order['fee']),
+            'cost': this.safeFloat (order, 'fee'),
             'currency': market['quote'],
         };
         let price = this.safeFloat (order, 'limit_price');
@@ -209,11 +274,16 @@ module.exports = class mercado extends Exchange {
         let filled = this.safeFloat (order, 'executed_quantity');
         let remaining = amount - filled;
         let cost = amount * average;
+        let lastTradeTimestamp = this.safeInteger (order, 'updated_timestamp');
+        if (lastTradeTimestamp !== undefined) {
+            lastTradeTimestamp = lastTradeTimestamp * 1000;
+        }
         let result = {
             'info': order,
-            'id': order['order_id'].toString (),
+            'id': id,
             'timestamp': timestamp,
             'datetime': this.iso8601 (timestamp),
+            'lastTradeTimestamp': lastTradeTimestamp,
             'symbol': symbol,
             'type': 'limit',
             'side': side,
@@ -225,13 +295,14 @@ module.exports = class mercado extends Exchange {
             'remaining': remaining,
             'status': status,
             'fee': fee,
+            'trades': undefined, // todo parse trades (operations)
         };
         return result;
     }
 
     async fetchOrder (id, symbol = undefined, params = {}) {
-        if (!symbol)
-            throw new ExchangeError (this.id + ' cancelOrder() requires a symbol argument');
+        if (symbol === undefined)
+            throw new ArgumentsRequired (this.id + ' cancelOrder() requires a symbol argument');
         await this.loadMarkets ();
         let market = this.market (symbol);
         let response = undefined;
@@ -242,21 +313,34 @@ module.exports = class mercado extends Exchange {
         return this.parseOrder (response['response_data']['order']);
     }
 
-    async withdraw (currency, amount, address, tag = undefined, params = {}) {
+    async withdraw (code, amount, address, tag = undefined, params = {}) {
+        this.checkAddress (address);
         await this.loadMarkets ();
+        let currency = this.currency (code);
         let request = {
-            'coin': currency,
+            'coin': currency['id'],
             'quantity': amount.toFixed (10),
             'address': address,
         };
-        if (currency === 'BRL') {
+        if (code === 'BRL') {
             let account_ref = ('account_ref' in params);
-            if (!account_ref)
-                throw new ExchangeError (this.id + ' requires account_ref parameter to withdraw ' + currency);
-        } else if (currency !== 'LTC') {
+            if (!account_ref) {
+                throw new ExchangeError (this.id + ' requires account_ref parameter to withdraw ' + code);
+            }
+        } else if (code !== 'LTC') {
             let tx_fee = ('tx_fee' in params);
-            if (!tx_fee)
-                throw new ExchangeError (this.id + ' requires tx_fee parameter to withdraw ' + currency);
+            if (!tx_fee) {
+                throw new ExchangeError (this.id + ' requires tx_fee parameter to withdraw ' + code);
+            }
+            if (code === 'XRP') {
+                if (tag === undefined) {
+                    if (!('destination_tag' in params)) {
+                        throw new ExchangeError (this.id + ' requires a tag argument or destination_tag parameter to withdraw ' + code);
+                    }
+                } else {
+                    request['destination_tag'] = tag;
+                }
+            }
         }
         let response = await this.privatePostWithdrawCoin (this.extend (request, params));
         return {
@@ -267,8 +351,11 @@ module.exports = class mercado extends Exchange {
 
     sign (path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined) {
         let url = this.urls['api'][api] + '/';
+        let query = this.omit (params, this.extractParams (path));
         if (api === 'public') {
             url += this.implodeParams (path, params);
+            if (Object.keys (query).length)
+                url += '?' + this.urlencode (query);
         } else {
             this.checkRequiredCredentials ();
             url += this.version + '/';
