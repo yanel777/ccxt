@@ -410,9 +410,6 @@ module.exports = class bittrex extends Exchange {
             side = 'sell';
         }
         let id = this.safeString2 (trade, 'Id', 'ID');
-        let symbol = undefined;
-        if (market !== undefined)
-            symbol = market['symbol'];
         let cost = undefined;
         let price = this.safeFloat (trade, 'Price');
         let amount = this.safeFloat (trade, 'Quantity');
